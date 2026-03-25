@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import transformers
-from transformers import LlamaModel, LlamaForCausalLM, LlamaTokenizer
+from transformers import AutoModel, AutoForCausalLM, AutoTokenizer
 from transformers.modeling_outputs import SequenceClassifierOutputWithPast
 import numpy as np
 from peft import (
@@ -202,8 +202,8 @@ class LLM4Rec(nn.Module):
         )
 
         # Remove 8-bit quantization, use float16 instead
-        self.llama_model = LlamaModel.from_pretrained(
-            "meta-llama/Llama-2-7b-hf",
+        self.llama_model = AutoModel.from_pretrained(
+            "mistralai/Mistral-7B-v0.1",
             torch_dtype=torch.float16,
             cache_dir=args['cache_dir'],
             device_map=self.args['device_map']
@@ -225,8 +225,8 @@ class LLM4Rec(nn.Module):
             self.llama_model.print_trainable_parameters()
         self.llama_model.config.use_cache = False
         # self.llama_model.config.num_hidden_layers = 10
-        self.llama_tokenizer = LlamaTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf", use_fast=False, cache_dir=args['cache_dir'])
-        # self.llama_tokenizer = LlamaTokenizer.from_pretrained(self.args['base_model'], use_fast=False, local_files_only=True, cache_dir=args['cache_dir'])
+        self.llama_tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1", use_fast=False, cache_dir=args['cache_dir'])
+        # self.llama_tokenizer = AutoTokenizer.from_pretrained(self.args['base_model'], use_fast=False, local_files_only=True, cache_dir=args['cache_dir'])
         self.llama_tokenizer.pad_token = "0"
         self.llama_tokenizer.padding_side = "right"
         self.instruct_ids, self.instruct_mask = self.llama_tokenizer(self.args['instruction_text'][0],
