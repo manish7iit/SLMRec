@@ -11,9 +11,6 @@ from peft import (
 )
 import math
 import os
-import torch_xla.core.xla_model as xm
-
-device = xm.xla_device()
 
 class PointWiseFeedForward(torch.nn.Module):
     def __init__(self, hidden_units, dropout_rate):
@@ -63,14 +60,14 @@ class Log2feats(torch.nn.Module):
     def forward(self, log_seqs):
         seqs = log_seqs
         positions = np.tile(np.array(range(log_seqs.shape[1])), [log_seqs.shape[0], 1])
-        seqs += self.pos_emb(torch.LongTensor(positions).to(device))
+        seqs += self.pos_emb(torch.LongTensor(positions).cuda())
         seqs = self.emb_dropout(seqs)
 
-        timeline_mask = torch.BoolTensor(log_seqs.cpu() == 0).to(device)
+        timeline_mask = torch.BoolTensor(log_seqs.cpu() == 0).cuda()
         seqs *= ~timeline_mask # broadcast in last dim
 
         tl = seqs.shape[1] # time dim len for enforce causality
-        attention_mask = ~torch.tril(torch.ones((tl, tl), dtype=torch.bool, device=device))
+        attention_mask = ~torch.tril(torch.ones((tl, tl), dtype=torch.bool, device="cuda"))
 
         for i in range(len(self.attention_layers)):
             seqs = torch.transpose(seqs, 0, 1)
@@ -207,11 +204,10 @@ class LLM4Rec(nn.Module):
         # Remove 8-bit quantization, use float16 instead
         self.llama_model = AutoModel.from_pretrained(
             "mistralai/Mistral-7B-v0.1",
-            torch_dtype=torch.float32,   # TPU prefers float32
-            cache_dir=args['cache_dir']
+            torch_dtype=torch.float16,
+            cache_dir=args['cache_dir'],
+            device_map=self.args['device_map']
         )
-
-        self.llama_model.to(device)
         if self.args['drop_type'] == "trune":
             self.llama_model.layers = nn.ModuleList(self.llama_model.layers[:self.args['llama_decoder_nums']])
         elif self.args['drop_type'] == "interval":
@@ -240,10 +236,7 @@ class LLM4Rec(nn.Module):
                                                                      truncation=True, padding=False,
                                                                      return_tensors='pt', add_special_tokens=False).values()
         print('Language decoder initialized.')
-        self.instruct_ids = self.instruct_ids.to(device)
-        self.instruct_mask = self.instruct_mask.to(device)
-        self.response_ids = self.response_ids.to(device)
-        self.response_mask = self.response_mask.to(device)
+
         self.task_type = args['task_type']
         self.input_embeds = nn.Embedding.from_pretrained(self.args['input_embeds'], freeze=True) # official true - loss 0
         self.input_proj = nn.Linear(self.input_dim, self.llama_model.config.hidden_size)
@@ -255,13 +248,13 @@ class LLM4Rec(nn.Module):
     def predict(self, inputs, inputs_mask, output_hidden_states=False, output_logits=True):
         bs = inputs.shape[0]
         if self.args['train_stargy'] == "lora":
-            instruct_embeds = self.llama_model.model.embed_tokens(self.instruct_ids.to(device)).expand(bs, -1, -1)
-            response_embeds = self.llama_model.model.embed_tokens(self.response_ids.to(device)).expand(bs, -1, -1)
+            instruct_embeds = self.llama_model.model.embed_tokens(self.instruct_ids.cuda()).expand(bs, -1, -1)
+            response_embeds = self.llama_model.model.embed_tokens(self.response_ids.cuda()).expand(bs, -1, -1)
         else:
-            instruct_embeds = self.llama_model.embed_tokens(self.instruct_ids.to(device)).expand(bs, -1, -1)
-            response_embeds = self.llama_model.embed_tokens(self.response_ids.to(device)).expand(bs, -1, -1)
-        instruct_mask = self.instruct_mask.to(device).expand(bs, -1)
-        response_mask = self.response_mask.to(device).expand(bs, -1)
+            instruct_embeds = self.llama_model.embed_tokens(self.instruct_ids.cuda()).expand(bs, -1, -1)
+            response_embeds = self.llama_model.embed_tokens(self.response_ids.cuda()).expand(bs, -1, -1)
+        instruct_mask = self.instruct_mask.cuda().expand(bs, -1)
+        response_mask = self.response_mask.cuda().expand(bs, -1)
 
         if self.task_type == 'general':
             users = self.user_proj(self.user_embeds(inputs[:, 0].unsqueeze(1)))
@@ -289,10 +282,10 @@ class LLM4Rec(nn.Module):
 
     def multiple_predict(self, inputs, inputs_mask):
         bs = inputs.shape[0]
-        instruct_embeds = self.llama_model.model.embed_tokens(self.instruct_ids.to(device)).expand(bs, -1, -1)
-        response_embeds = self.llama_model.model.embed_tokens(self.response_ids.to(device)).expand(bs, -1, -1)
-        instruct_mask = self.instruct_mask.to(device).expand(bs, -1)
-        response_mask = self.response_mask.to(device).expand(bs, -1)
+        instruct_embeds = self.llama_model.model.embed_tokens(self.instruct_ids.cuda()).expand(bs, -1, -1)
+        response_embeds = self.llama_model.model.embed_tokens(self.response_ids.cuda()).expand(bs, -1, -1)
+        instruct_mask = self.instruct_mask.cuda().expand(bs, -1)
+        response_mask = self.response_mask.cuda().expand(bs, -1)
 
         if self.task_type == 'general':
             users = self.user_proj(self.user_embeds(inputs[:, 0].unsqueeze(1)))
@@ -330,8 +323,8 @@ class LLM4Rec(nn.Module):
             pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
             neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
 
-            pos_label = torch.ones_like(pos_logits).to(device)
-            neg_label = torch.zeros_like(neg_logits).to(device)
+            pos_label = torch.ones_like(pos_logits).cuda()
+            neg_label = torch.zeros_like(neg_logits).cuda()
             loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
             loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
             loss = loss_real + loss_false
@@ -346,8 +339,8 @@ class LLM4Rec(nn.Module):
                 pos_logits = torch.matmul(log_feats, pos_embs)
                 neg_logits = torch.matmul(log_feats, neg_embs)
                 loss_tmp = None
-                pos_label = torch.ones_like(pos_logits).to(device)
-                neg_label = torch.zeros_like(neg_logits).to(device)
+                pos_label = torch.ones_like(pos_logits).cuda()
+                neg_label = torch.zeros_like(neg_logits).cuda()
                 loss_real = nn.BCEWithLogitsLoss(reduce=False)(pos_logits, pos_label)
                 loss_false = nn.BCEWithLogitsLoss(reduce=False)(neg_logits, neg_label)
                 loss_tmp = torch.mean(loss_real,-1) + torch.mean(loss_false,-1)
@@ -378,8 +371,8 @@ class LLM4RecTeacher(LLM4Rec):
             pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
             neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
 
-            pos_label = torch.ones_like(pos_logits).to(device)
-            neg_label = torch.zeros_like(neg_logits).to(device)
+            pos_label = torch.ones_like(pos_logits).cuda()
+            neg_label = torch.zeros_like(neg_logits).cuda()
             loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
             loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
             loss = loss_real + loss_false
@@ -394,8 +387,8 @@ class LLM4RecTeacher(LLM4Rec):
                 pos_logits = torch.matmul(log_feats, pos_embs)
                 neg_logits = torch.matmul(log_feats, neg_embs)
                 loss_tmp = None
-                pos_label = torch.ones_like(pos_logits).to(device)
-                neg_label = torch.zeros_like(neg_logits).to(device)
+                pos_label = torch.ones_like(pos_logits).cuda()
+                neg_label = torch.zeros_like(neg_logits).cuda()
                 loss_real = nn.BCEWithLogitsLoss(reduce=False)(pos_logits, pos_label)
                 loss_false = nn.BCEWithLogitsLoss(reduce=False)(neg_logits, neg_label)
                 loss_tmp = torch.mean(loss_real,-1) + torch.mean(loss_false,-1)
@@ -449,8 +442,8 @@ class LLM4RecStudent(LLM4Rec):
             pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
             neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
 
-            pos_label = torch.ones_like(pos_logits).to(device)
-            neg_label = torch.zeros_like(neg_logits).to(device)
+            pos_label = torch.ones_like(pos_logits).cuda()
+            neg_label = torch.zeros_like(neg_logits).cuda()
             loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
             loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
             loss = loss_real + loss_false
@@ -577,8 +570,8 @@ class LLM4RecDistill(nn.Module):
             pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
             neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
 
-            pos_label = torch.ones_like(pos_logits).to(device)
-            neg_label = torch.zeros_like(neg_logits).to(device)
+            pos_label = torch.ones_like(pos_logits).cuda()
+            neg_label = torch.zeros_like(neg_logits).cuda()
             loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
             loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
             loss = loss_real + loss_false
