@@ -206,7 +206,7 @@ class LLM4Rec(nn.Module):
             "mistralai/Mistral-7B-v0.1",
             torch_dtype=torch.float16,
             cache_dir=args['cache_dir'],
-            device_map=self.args['device_map']
+            device_map="auto"
         )
         if self.args['drop_type'] == "trune":
             self.llama_model.layers = nn.ModuleList(self.llama_model.layers[:self.args['llama_decoder_nums']])
