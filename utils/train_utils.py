@@ -34,7 +34,7 @@ class DistillationTrainingArguments(transformers.TrainingArguments):
 
 class SLMTrainer(transformers.Trainer):
 
-    def log(self, logs: Dict[str, float]) -> None:
+    def log(self, logs: Dict[str, float],*args,**kwargs) -> None:
         """
         Log `logs` on the various objects watching training.
 
@@ -56,6 +56,7 @@ class SLMTrainer(transformers.Trainer):
             file.write('\n')
 
         self.control = self.callback_handler.on_log(self.args, self.state, self.control, logs)
+        return super().log(logs, *args, **kwargs)
 
 class DistillationTrainer(transformers.Trainer):
     def __init__(self, *args, teacher_model=None, **kwargs):
