@@ -157,6 +157,8 @@ def train(
         evaluation_strategy = "epoch"
     else:
         evaluation_strategy = "steps"
+        
+    model = model.to("cuda")
     trainer = SLMTrainer(#transformers.Trainer(
         model=model,
         train_dataset=datasetTrain,
@@ -218,6 +220,7 @@ def train(
         seq_len=30,
         llama_decoder_nums=llama_decoder_nums,
     )
+    model = model.to("cuda")
     trainer = SLMTrainer(#transformers.Trainer(
         model=model,
         train_dataset=datasetTrain,
