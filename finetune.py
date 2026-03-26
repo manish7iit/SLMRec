@@ -14,6 +14,7 @@ from model import LLM4Rec
 from utils.data_utils import *
 from utils.eval_utils import RecallPrecision_atK, MRR_atK, MAP_atK, NDCG_atK, AUC, getLabel, compute_metrics
 from utils.train_utils import SLMTrainer
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 def train(
     # model/data params
