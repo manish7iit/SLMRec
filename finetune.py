@@ -92,7 +92,7 @@ def train(
     # assert (
     #     base_model
     # ), "Please specify a --base_model, e.g. --base_model='huggyllama/llama-7b'"
-    gradient_accumulation_steps = 1 // micro_batch_size
+    gradient_accumulation_steps = 1 
 
     prompter = Prompter(prompt_template_name)
 
