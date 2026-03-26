@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import transformers
-from transformers import AutoModel, AutoForCausalLM, AutoTokenizer
+from transformers import AutoModel,AutoModelForCausalLM, AutoTokenizer
 from transformers.modeling_outputs import SequenceClassifierOutputWithPast
 import numpy as np
 from peft import (
