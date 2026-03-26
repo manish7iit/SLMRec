@@ -180,9 +180,9 @@ def train(
             #metric_for_best_model="mrr",
             # evaluation_strategy="steps", #if val_set_size > 0 else "no",
             #eval_strategy=evaluation_strategy, # epoch
-            save_strategy="no",
+            save_strategy="steps",
             #eval_steps=eval_steps,
-            save_steps=save_steps,
+            save_steps=max_steps,
             lr_scheduler_type="cosine",
             logging_dir = output_dir,
             output_dir=output_dir,
@@ -242,9 +242,9 @@ def train(
             #metric_for_best_model="mrr",
             # evaluation_strategy="steps", #if val_set_size > 0 else "no",
             #eval_strategy=evaluation_strategy, # epoch
-            save_strategy="no",
+            save_strategy="steps",
             #eval_steps=eval_steps,
-            save_steps=save_steps,
+            save_steps=max_steps,
             lr_scheduler_type="cosine",
             logging_dir = output_dir,
             output_dir=output_dir,
@@ -260,7 +260,7 @@ def train(
         data_collator=data_collator,
         compute_metrics = compute_metrics,
     )
-    trainer._load_from_checkpoint(best_checkpoint_path)
+    #trainer._load_from_checkpoint(best_checkpoint_path)
     pred_out = trainer.predict(test_dataset=datasetTest)
     output_data = {}
     if pred_out.metrics is not None:
