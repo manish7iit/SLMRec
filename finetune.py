@@ -92,11 +92,11 @@ def train(
     # assert (
     #     base_model
     # ), "Please specify a --base_model, e.g. --base_model='huggyllama/llama-7b'"
-    gradient_accumulation_steps = batch_size // micro_batch_size
+    gradient_accumulation_steps = 1 // micro_batch_size
 
     prompter = Prompter(prompt_template_name)
 
-    device_map = "auto"
+    device_map = None
     world_size = int(os.environ.get("WORLD_SIZE", 1))
     ddp = world_size != 1
     if ddp:
@@ -242,7 +242,7 @@ def train(
             #metric_for_best_model="mrr",
             # evaluation_strategy="steps", #if val_set_size > 0 else "no",
             #eval_strategy=evaluation_strategy, # epoch
-            save_strategy=save_strategy,
+            save_strategy="no",
             #eval_steps=eval_steps,
             save_steps=save_steps,
             lr_scheduler_type="cosine",
