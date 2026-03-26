@@ -130,7 +130,7 @@ def train(
         lora_alpha=lora_alpha,
         lora_dropout=lora_dropout,
         lora_target_modules=lora_target_modules,
-        device_map=None,  # Explicitly specify CUDA device
+        device_map=device_map,  # Explicitly specify CUDA device
         instruction_text=prompter.generate_prompt(task_type),
         train_stargy=train_stargy,
         user_embeds=None,
@@ -167,11 +167,11 @@ def train(
             warmup_steps=warmup_steps,
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
-            dataloader_num_workers=0,
+            dataloader_num_workers=8,
             per_device_eval_batch_size = 512,
             remove_unused_columns = False,
             max_steps=max_steps,
-            fp16=False,
+            fp16=True,
             logging_steps=1,
             optim="adamw_torch",
             metric_for_best_model="mrr",
@@ -209,7 +209,7 @@ def train(
         lora_alpha=lora_alpha,
         lora_dropout=lora_dropout,
         lora_target_modules=lora_target_modules,
-        device_map=None,
+        device_map=device_map,
         instruction_text=prompter.generate_prompt(task_type),
         train_stargy = train_stargy,
         user_embeds=None,
@@ -228,11 +228,11 @@ def train(
             warmup_steps=warmup_steps,
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
-            dataloader_num_workers=0,
+            dataloader_num_workers=64,
             per_device_eval_batch_size = 512,
             remove_unused_columns = False,
             max_steps=max_steps,
-            fp16=False,
+            fp16=True,
             logging_steps=1,
             optim="adamw_torch",
             metric_for_best_model="mrr",
@@ -269,5 +269,5 @@ def train(
         json.dump(output_data, file)
 
 if __name__ == "__main__":
-     
+    torch.cuda.empty_cache() 
     fire.Fire(train)
