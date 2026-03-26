@@ -130,7 +130,7 @@ def train(
         lora_alpha=lora_alpha,
         lora_dropout=lora_dropout,
         lora_target_modules=lora_target_modules,
-        device_map=none,  # Explicitly specify CUDA device
+        device_map=None,  # Explicitly specify CUDA device
         instruction_text=prompter.generate_prompt(task_type),
         train_stargy=train_stargy,
         user_embeds=None,
@@ -209,7 +209,7 @@ def train(
         lora_alpha=lora_alpha,
         lora_dropout=lora_dropout,
         lora_target_modules=lora_target_modules,
-        device_map=none,
+        device_map=None,
         instruction_text=prompter.generate_prompt(task_type),
         train_stargy = train_stargy,
         user_embeds=None,
