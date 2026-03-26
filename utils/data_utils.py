@@ -389,7 +389,12 @@ class LLMDataset(Dataset):
         target_neg = target_neg[-self.max_len:]
 
         neg_items_set = self.item_pool - seq_set
-        neg_samples = random.sample(neg_items_set, self.item_size)
+        neg_items_list = list(neg_items_set)
+
+        if len(neg_items_list) >= self.item_size:
+            neg_samples = random.sample(neg_items_list, self.item_size)
+        else:
+            neg_samples = random.choices(neg_items_list, k=self.item_size)
 
         assert len(input_ids) == self.max_len
         assert len(target_pos) == self.max_len
