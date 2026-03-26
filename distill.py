@@ -123,7 +123,7 @@ def train(
 
     prompter = Prompter(prompt_template_name)
 
-    device_map = "auto"
+    device_map = None
     world_size = int(os.environ.get("WORLD_SIZE", 1))
     ddp = world_size != 1
     if ddp:
@@ -144,10 +144,10 @@ def train(
         os.environ["WANDB_LOG_MODEL"] = wandb_log_model
     # choose from cloths and movies
     item_embed = pickle.load(open('./sasrec_{}/sasrec_item.pkl'.format(domain_type), 'rb'))['item_embedding']
-    if not ddp and torch.cuda.device_count() > 1:
+    #if not ddp and torch.cuda.device_count() > 1:
         # keeps Trainer from trying its own DataParallelism when more than 1 gpu is available
-        model.is_parallelizable = True
-        model.model_parallel = True
+        #model.is_parallelizable = True
+        #model.model_parallel = True
     #args.include_inputs_for_metrics --> true
     datasetTrain = LLMDataset(item_size=999, max_seq_length=30,data_type='train',csv_path="./dataset/music.csv".format(domain_type))
     datasetVal = LLMDataset(item_size=999, max_seq_length=30,data_type='valid',csv_path="./dataset/music.csv".format(domain_type))
@@ -211,27 +211,29 @@ def train(
             # llama_decoder_nums_student=llama_decoder_nums_student,
             # distill_lambda=distill_lambda,
         )
+        model_teacher = model_teacher.to("cuda")
+        model = model.to("cuda")
         trainer = RecDistillationTrainer(#transformers.Trainer(
             teacher_model=model_teacher,
             model=model,
             train_dataset=datasetTrain,
-            eval_dataset=datasetVal,
+            eval_dataset=None,
             args=DistillationTrainingArguments(
                 per_device_train_batch_size=micro_batch_size,
-                include_inputs_for_metrics = True,
+                #include_inputs_for_metrics = True,
                 gradient_accumulation_steps=1, # change it
                 warmup_steps=warmup_steps,
                 num_train_epochs=num_epochs,
                 learning_rate=learning_rate,
-                dataloader_num_workers=20,
-                per_device_eval_batch_size = 1024,
+                dataloader_num_workers=2,
+                per_device_eval_batch_size = 128,
                 remove_unused_columns = False,
                 fp16=True,
-                logging_steps=1,
+                logging_steps=50,
                 optim="adamw_torch",
-                metric_for_best_model="mrr",
+                #metric_for_best_model="mrr",
                 # evaluation_strategy="steps", #if val_set_size > 0 else "no",
-                evaluation_strategy=evaluation_strategy, # epoch
+                #evaluation_strategy=evaluation_strategy, # epoch
                 save_strategy=save_strategy,
                 max_steps=max_steps,
                 eval_steps=eval_steps,
@@ -290,27 +292,28 @@ def train(
             is_cls_multiple_teacher=is_cls_multiple_teacher,
             is_cls_multiple_student=is_cls_multiple_student,
         ) 
+        model = model.to("cuda")
         trainer = RecDistillationTrainer(
             teacher_model=None, #cover in student model
             model=model,
             train_dataset=datasetTrain,
-            eval_dataset=datasetVal,
+            eval_dataset=None,
             args=DistillationTrainingArguments(
                 per_device_train_batch_size=micro_batch_size,
-                include_inputs_for_metrics = True,
+                #include_inputs_for_metrics = True,
                 gradient_accumulation_steps=1, # change it
                 warmup_steps=warmup_steps,
                 num_train_epochs=num_epochs,
                 learning_rate=learning_rate,
-                dataloader_num_workers=20,
-                per_device_eval_batch_size = 1024,
+                dataloader_num_workers=2,
+                per_device_eval_batch_size = 128,
                 remove_unused_columns = False,
                 fp16=True,
-                logging_steps=1,
+                logging_steps=50,
                 optim="adamw_torch",
-                metric_for_best_model="mrr",
+                #metric_for_best_model="mrr",
                 # evaluation_strategy="steps", #if val_set_size > 0 else "no",
-                evaluation_strategy=evaluation_strategy, # epoch
+                #evaluation_strategy=evaluation_strategy, # epoch
                 save_strategy=save_strategy,
                 max_steps=max_steps,
                 eval_steps=eval_steps,
@@ -349,7 +352,7 @@ def train(
         # trainer._load_from_checkpoint(student_resume_from_checkpoint)
         trainer.train()
         # trainer.evaluate(eval_dataset=datasetVal)
-        best_checkpoint_path = trainer.state.best_model_checkpoint
+        best_checkpoint_path = output_dir
         # trainer._load_from_checkpoint(trainer.state.best_model_checkpoint)
     elif train_eval_type=="eval":
         trainer._load_from_checkpoint(student_resume_from_checkpoint)
@@ -409,23 +412,23 @@ def train(
                 teacher_model=model_teacher,
                 model=model,
                 train_dataset=datasetTrain,
-                eval_dataset=datasetVal,
+                eval_dataset=None,
                 args=DistillationTrainingArguments(
                     per_device_train_batch_size=micro_batch_size,
-                    include_inputs_for_metrics = True,
+                    #include_inputs_for_metrics = True,
                     gradient_accumulation_steps=1, # change it
                     warmup_steps=warmup_steps,
                     num_train_epochs=num_epochs,
                     learning_rate=learning_rate,
-                    dataloader_num_workers=20,
-                    per_device_eval_batch_size = 1024,
+                    dataloader_num_workers=2,
+                    per_device_eval_batch_size = 128,
                     remove_unused_columns = False,
                     fp16=True,
-                    logging_steps=1,
+                    logging_steps=50,
                     optim="adamw_torch",
-                    metric_for_best_model="mrr",
+                    #metric_for_best_model="mrr",
                     # evaluation_strategy="steps", #if val_set_size > 0 else "no",
-                    evaluation_strategy=evaluation_strategy, # epoch
+                    #evaluation_strategy=evaluation_strategy, # epoch
                     save_strategy=save_strategy,
                     eval_steps=eval_steps,
                     save_steps=save_steps,
@@ -488,23 +491,23 @@ def train(
                 teacher_model=None, #cover in student model
                 model=model,
                 train_dataset=datasetTrain,
-                eval_dataset=datasetVal,
+                eval_dataset=None,
                 args=DistillationTrainingArguments(
                     per_device_train_batch_size=micro_batch_size,
-                    include_inputs_for_metrics = True,
+                    #include_inputs_for_metrics = True,
                     gradient_accumulation_steps=1, # change it
                     warmup_steps=warmup_steps,
                     num_train_epochs=num_epochs,
                     learning_rate=learning_rate,
-                    dataloader_num_workers=20,
-                    per_device_eval_batch_size = 1024,
+                    dataloader_num_workers=2,
+                    per_device_eval_batch_size = 128,
                     remove_unused_columns = False,
                     fp16=True,
-                    logging_steps=1,
+                    logging_steps=50,
                     optim="adamw_torch",
-                    metric_for_best_model="mrr",
+                    #metric_for_best_model="mrr",
                     # evaluation_strategy="steps", #if val_set_size > 0 else "no",
-                    evaluation_strategy=evaluation_strategy, # epoch
+                    #evaluation_strategy=evaluation_strategy, # epoch
                     save_strategy=save_strategy,
                     eval_steps=eval_steps,
                     save_steps=save_steps,
@@ -538,7 +541,7 @@ def train(
                 data_collator=data_collator,
                 compute_metrics = compute_metrics,
             )
-        trainer._load_from_checkpoint(best_checkpoint_path)    
+        #trainer._load_from_checkpoint(best_checkpoint_path)    
     pred_out = trainer.predict(test_dataset=datasetTest)
     output_data = {}
     if pred_out.metrics is not None:
