@@ -211,7 +211,7 @@ class LLM4Rec(nn.Module):
             cache_dir=args['cache_dir']
         )
 
-       self.llama_model.to(device)
+        self.llama_model.to(device)
         if self.args['drop_type'] == "trune":
             self.llama_model.layers = nn.ModuleList(self.llama_model.layers[:self.args['llama_decoder_nums']])
         elif self.args['drop_type'] == "interval":
