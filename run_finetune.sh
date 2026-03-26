@@ -11,7 +11,7 @@ if [ -z "$OUTPUT_DIR" ]; then
 fi
 
 # Run the command with the provided output directory
-NCCL_P2P_DISABLE=1 CUDA_LAUNCH_BLOCKING=1 torchrun --nproc_per_node=8 --master_port=1234 finetune.py \
+NCCL_P2P_DISABLE=1 CUDA_LAUNCH_BLOCKING=1 torchrun --nproc_per_node=1 --master_port=1234 finetune.py \
     --task_type sequential \
     --cache_dir cace_dir/ \
     --output_dir "$OUTPUT_DIR" \
