@@ -163,7 +163,7 @@ def train(
         eval_dataset=datasetVal,
         args=transformers.TrainingArguments(
             per_device_train_batch_size=micro_batch_size,
-            include_inputs_for_metrics = True,
+            #include_inputs_for_metrics = True,
             gradient_accumulation_steps=1, # change it
             warmup_steps=warmup_steps,
             num_train_epochs=num_epochs,
