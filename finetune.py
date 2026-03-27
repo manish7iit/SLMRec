@@ -27,14 +27,14 @@ def train(
     # training hyperparams
     batch_size: int = 128,
     micro_batch_size: int = 16,
-    num_epochs: int = 1,
+    num_epochs: int = 3,
     learning_rate: float = 3e-4,
     cutoff_len: int = 512,
     val_set_size: int = 0,
     interval_nums: int = 0,
     drop_type: str="trune",
     lr_scheduler: str = "cosine",
-    max_steps: int = 1000,
+    max_steps: int = 5000,
     warmup_steps: int = 100, 
     save_steps: int = 100000,
     eval_steps: int = 100,
@@ -264,9 +264,17 @@ def train(
     pred_out = trainer.predict(test_dataset=datasetTest)
     output_data = {}
     if pred_out.metrics is not None:
-        for metric_name, metric_value in pred_out.metrics.items():
-            print(f"{metric_name}: {metric_value}")
-            output_data[metric_name] = metric_value
+        metrics = pred_out.metrics
+
+        hr1 = metrics.get("test_hit@1", 0) * 100
+        hr5 = metrics.get("test_hit@5", 0) * 100
+        ndcg5 = metrics.get("test_ndcg@5", 0) * 100
+        mrr = metrics.get("test_mrr", 0) * 100
+
+        print(f"HR@1   : {hr1:.2f}")
+        print(f"HR@5   : {hr5:.2f}")
+        print(f"NDCG@5 : {ndcg5:.2f}")
+        print(f"MRR    : {mrr:.2f}")
 
     # Write the output data to a file
     with open(os.path.join(output_dir,"log.txt"), 'a') as file:
