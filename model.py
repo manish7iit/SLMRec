@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import transformers
-from transformers import AutoModel,AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 from transformers.modeling_outputs import SequenceClassifierOutputWithPast
 import numpy as np
 from peft import (
@@ -201,12 +201,12 @@ class LLM4Rec(nn.Module):
             bias='none',
         )
 
-        # Remove 8-bit quantization, use float16 instead
+        # Qwen2.5-3B (3B params, ~2x smaller than Mistral-7B)
         self.llama_model = AutoModel.from_pretrained(
-            "mistralai/Mistral-7B-v0.1",
+            "Qwen/Qwen2.5-3B",
             torch_dtype=torch.float16,
             cache_dir=args['cache_dir'],
-            device_map=None
+            device_map=self.args['device_map']
         )
         if self.args['drop_type'] == "trune":
             self.llama_model.layers = nn.ModuleList(self.llama_model.layers[:self.args['llama_decoder_nums']])
@@ -225,9 +225,10 @@ class LLM4Rec(nn.Module):
             self.llama_model.print_trainable_parameters()
         self.llama_model.config.use_cache = False
         # self.llama_model.config.num_hidden_layers = 10
-        self.llama_tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1", use_fast=False, cache_dir=args['cache_dir'])
-        # self.llama_tokenizer = AutoTokenizer.from_pretrained(self.args['base_model'], use_fast=False, local_files_only=True, cache_dir=args['cache_dir'])
-        self.llama_tokenizer.pad_token = "0"
+        self.llama_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B", use_fast=True, cache_dir=args['cache_dir'])
+        # self.llama_tokenizer = AutoTokenizer.from_pretrained(self.args['base_model'], use_fast=True, local_files_only=True, cache_dir=args['cache_dir'])
+        # Qwen2.5 does not define a dedicated pad token; use EOS token instead
+        self.llama_tokenizer.pad_token = self.llama_tokenizer.eos_token
         self.llama_tokenizer.padding_side = "right"
         self.instruct_ids, self.instruct_mask = self.llama_tokenizer(self.args['instruction_text'][0],
                                                                      truncation=True, padding=False,
