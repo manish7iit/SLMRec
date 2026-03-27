@@ -56,7 +56,7 @@ def train(
     resume_from_checkpoint: str = None,  # either training checkpoint or final adapter
     prompt_template_name: str = "alpaca",
     llama_decoder_nums: int = 32, 
-    domain_type: str = "cloths",
+    domain_type: str = "music",
 ):
     if int(os.environ.get("LOCAL_RANK", 0)) == 0:
         print(
@@ -115,8 +115,8 @@ def train(
         os.environ["WANDB_WATCH"] = wandb_watch
     if len(wandb_log_model) > 0:
         os.environ["WANDB_LOG_MODEL"] = wandb_log_model
-    # choose from cloths and movies
-    item_embed = pickle.load(open('./sasrec_cloths/sasrec_item.pkl', 'rb'))['item_embedding']
+    # choose from music and movies
+    item_embed = pickle.load(open('./sasrec_music/sasrec_item.pkl', 'rb'))['item_embedding']
             
     # Initialize model with float16 precision
     model = LLM4Rec(
@@ -266,10 +266,10 @@ def train(
     if pred_out.metrics is not None:
         metrics = pred_out.metrics
 
-        hr1 = metrics.get("test_hit@1", 0) * 100
-        hr5 = metrics.get("test_hit@5", 0) * 100
-        ndcg5 = metrics.get("test_ndcg@5", 0) * 100
-        mrr = metrics.get("test_mrr", 0) * 100
+        hr1 = metrics.get("hit@1", 0) * 100
+        hr5 = metrics.get("hit@5", 0) * 100
+        ndcg5 = metrics.get("ndcg@5", 0) * 100
+        mrr = metrics.get("mrr", 0) * 100
 
         print(f"HR@1   : {hr1:.2f}")
         print(f"HR@5   : {hr5:.2f}")

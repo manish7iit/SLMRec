@@ -55,7 +55,7 @@ def train(
     teacher_resume_from_checkpoint: str = None,  # either training checkpoint or final adapter
     student_resume_from_checkpoint: str = None,  # either training checkpoint or final adapter
     prompt_template_name: str = "alpaca",
-    domain_type: str = "cloths",
+    domain_type: str = "music",
     llama_decoder_nums_teacher: int = 32,
     llama_decoder_nums_student: int = 8,
     distill_block: int = 4,
@@ -142,7 +142,7 @@ def train(
         os.environ["WANDB_WATCH"] = wandb_watch
     if len(wandb_log_model) > 0:
         os.environ["WANDB_LOG_MODEL"] = wandb_log_model
-    # choose from cloths and movies
+    # choose from music and movies
     item_embed = pickle.load(open('./sasrec_{}/sasrec_item.pkl'.format(domain_type), 'rb'))['item_embedding']
     #if not ddp and torch.cuda.device_count() > 1:
         # keeps Trainer from trying its own DataParallelism when more than 1 gpu is available
@@ -548,10 +548,10 @@ def train(
         metrics = pred_out.metrics
 
 
-        hr1 = metrics.get("test_hit@1", 0) * 100
-        hr5 = metrics.get("test_hit@5", 0) * 100
-        ndcg5 = metrics.get("test_ndcg@5", 0) * 100
-        mrr = metrics.get("test_mrr", 0) * 100
+        hr1 = metrics.get("hit@1", 0) * 100
+        hr5 = metrics.get("hit@5", 0) * 100
+        ndcg5 = metrics.get("ndcg@5", 0) * 100
+        mrr = metrics.get("mrr", 0) * 100
 
         print(f"HR@1   : {hr1:.2f}")
         print(f"HR@5   : {hr5:.2f}")

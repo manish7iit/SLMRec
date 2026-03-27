@@ -1,6 +1,6 @@
-[2024-11-14 14:42:56,418] {'epoch': 50, 'bs': 1024, 'use_gpu': True, 'lr': 0.0001, 'emb_dim': 128, 'hid_dim': 32, 'max_seq_length': 30, 'item_size': 999, 'overlap_ratio': 0.5, 'layers': 2, 'model_dir': 'model/', 'log_file': 'log.txt', 'model': 'sasrec', 'dataset_type': 'amazon', 'domain_type': 'cloths'}
-[2024-11-14 14:50:24,600] {'epoch': 50, 'bs': 1024, 'use_gpu': True, 'lr': 0.0001, 'emb_dim': 128, 'hid_dim': 32, 'max_seq_length': 30, 'item_size': 999, 'overlap_ratio': 0.5, 'layers': 2, 'model_dir': 'model/', 'log_file': 'log.txt', 'model': 'sasrec', 'dataset_type': 'amazon', 'domain_type': 'cloths'}
-[2024-11-14 14:58:59,483] {'epoch': 50, 'bs': 1024, 'use_gpu': True, 'lr': 0.0001, 'emb_dim': 128, 'hid_dim': 32, 'max_seq_length': 30, 'item_size': 999, 'overlap_ratio': 0.5, 'layers': 2, 'model_dir': 'model/', 'log_file': 'log.txt', 'model': 'sasrec', 'dataset_type': 'amazon', 'domain_type': 'cloths'}
+[2024-11-14 14:42:56,418] {'epoch': 50, 'bs': 1024, 'use_gpu': True, 'lr': 0.0001, 'emb_dim': 128, 'hid_dim': 32, 'max_seq_length': 30, 'item_size': 999, 'overlap_ratio': 0.5, 'layers': 2, 'model_dir': 'model/', 'log_file': 'log.txt', 'model': 'sasrec', 'dataset_type': 'amazon', 'domain_type': 'music'}
+[2024-11-14 14:50:24,600] {'epoch': 50, 'bs': 1024, 'use_gpu': True, 'lr': 0.0001, 'emb_dim': 128, 'hid_dim': 32, 'max_seq_length': 30, 'item_size': 999, 'overlap_ratio': 0.5, 'layers': 2, 'model_dir': 'model/', 'log_file': 'log.txt', 'model': 'sasrec', 'dataset_type': 'amazon', 'domain_type': 'music'}
+[2024-11-14 14:58:59,483] {'epoch': 50, 'bs': 1024, 'use_gpu': True, 'lr': 0.0001, 'emb_dim': 128, 'hid_dim': 32, 'max_seq_length': 30, 'item_size': 999, 'overlap_ratio': 0.5, 'layers': 2, 'model_dir': 'model/', 'log_file': 'log.txt', 'model': 'sasrec', 'dataset_type': 'amazon', 'domain_type': 'music'}
 [2024-11-14 14:59:06,940] train total loss:28.167016983032227 	
 [2024-11-14 14:59:12,727] train total loss:27.16200710478283 	
 [2024-11-14 14:59:21,656] train total loss:26.239892168742855 	
@@ -8,7 +8,7 @@
 [2024-11-14 14:59:35,311] train total loss:24.41265454704379 	
 [2024-11-14 14:59:42,892] train total loss:23.463049161552203 	
 [2024-11-14 14:59:49,867] train total loss:22.557193046758982 	
-[2024-11-14 15:01:33,210] {'epoch': 50, 'bs': 1024, 'use_gpu': True, 'lr': 0.0001, 'emb_dim': 128, 'hid_dim': 32, 'max_seq_length': 30, 'item_size': 999, 'overlap_ratio': 0.5, 'layers': 2, 'model_dir': 'model/', 'log_file': 'log.txt', 'model': 'sasrec', 'dataset_type': 'amazon', 'domain_type': 'cloths'}
+[2024-11-14 15:01:33,210] {'epoch': 50, 'bs': 1024, 'use_gpu': True, 'lr': 0.0001, 'emb_dim': 128, 'hid_dim': 32, 'max_seq_length': 30, 'item_size': 999, 'overlap_ratio': 0.5, 'layers': 2, 'model_dir': 'model/', 'log_file': 'log.txt', 'model': 'sasrec', 'dataset_type': 'amazon', 'domain_type': 'music'}
 [2024-11-14 15:01:41,108] train total loss:28.167016983032227 	
 [2024-11-14 15:01:47,753] train total loss:27.16200710478283 	
 [2024-11-14 15:01:55,380] train total loss:26.239892168742855 	
