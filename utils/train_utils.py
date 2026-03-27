@@ -3,6 +3,7 @@ import os
 from typing import Any, Dict, List, Optional, Union
 import json
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import math
 from transformers.trainer import *
@@ -68,7 +69,7 @@ class DistillationTrainer(transformers.Trainer):
             self.teacher.eval()
         # self.logger = logger
 
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
 
         # compute student output
         outputs_student = model(**inputs)
@@ -95,7 +96,7 @@ class DistillationTrainer(transformers.Trainer):
 
 
 class RecDistillationTrainer(DistillationTrainer,SLMTrainer):
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         if self.args.distill_type_standard == "offline":
             # compute student output
             if self.label_smoother is not None and "labels" in inputs:
