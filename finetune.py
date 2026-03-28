@@ -56,7 +56,7 @@ def train(
     resume_from_checkpoint: str = None,  # either training checkpoint or final adapter
     prompt_template_name: str = "alpaca",
     llama_decoder_nums: int = 32, 
-    domain_type: str = "movies",
+    domain_type: str = "sport",
 ):
     if int(os.environ.get("LOCAL_RANK", 0)) == 0:
         print(
@@ -115,8 +115,8 @@ def train(
         os.environ["WANDB_WATCH"] = wandb_watch
     if len(wandb_log_model) > 0:
         os.environ["WANDB_LOG_MODEL"] = wandb_log_model
-    # choose from movies and movies
-    item_embed = pickle.load(open('./sasrec_movies/sasrec_item.pkl', 'rb'))['item_embedding']
+    # choose from sport and sport
+    item_embed = pickle.load(open('./sasrec_sport/sasrec_item.pkl', 'rb'))['item_embedding']
             
     # Initialize model with float16 precision
     model = LLM4Rec(
@@ -145,9 +145,9 @@ def train(
         model.is_parallelizable = True
         model.model_parallel = True
     #args.include_inputs_for_metrics --> true
-    datasetTrain = LLMDataset(item_size=999, max_seq_length=30,data_type='train',csv_path="./dataset/movies.csv".format(domain_type))
-    datasetVal = LLMDataset(item_size=999, max_seq_length=30,data_type='valid',csv_path="./dataset/movies.csv".format(domain_type))
-    datasetTest = LLMDataset(item_size=999, max_seq_length=30,data_type='test',csv_path="./dataset/movies.csv".format(domain_type))
+    datasetTrain = LLMDataset(item_size=999, max_seq_length=30,data_type='train',csv_path="./dataset/sport.csv".format(domain_type))
+    datasetVal = LLMDataset(item_size=999, max_seq_length=30,data_type='valid',csv_path="./dataset/sport.csv".format(domain_type))
+    datasetTest = LLMDataset(item_size=999, max_seq_length=30,data_type='test',csv_path="./dataset/sport.csv".format(domain_type))
     data_collator = SequentialCollator()
     if save_steps<0:
         save_strategy = "epoch"

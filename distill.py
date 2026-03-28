@@ -55,7 +55,7 @@ def train(
     teacher_resume_from_checkpoint: str = None,  # either training checkpoint or final adapter
     student_resume_from_checkpoint: str = None,  # either training checkpoint or final adapter
     prompt_template_name: str = "alpaca",
-    domain_type: str = "movies",
+    domain_type: str = "sport",
     llama_decoder_nums_teacher: int = 32,
     llama_decoder_nums_student: int = 8,
     distill_block: int = 4,
@@ -142,16 +142,16 @@ def train(
         os.environ["WANDB_WATCH"] = wandb_watch
     if len(wandb_log_model) > 0:
         os.environ["WANDB_LOG_MODEL"] = wandb_log_model
-    # choose from movies and movies
+    # choose from sport and sport
     item_embed = pickle.load(open('./sasrec_{}/sasrec_item.pkl'.format(domain_type), 'rb'))['item_embedding']
     #if not ddp and torch.cuda.device_count() > 1:
         # keeps Trainer from trying its own DataParallelism when more than 1 gpu is available
         #model.is_parallelizable = True
         #model.model_parallel = True
     #args.include_inputs_for_metrics --> true
-    datasetTrain = LLMDataset(item_size=999, max_seq_length=30,data_type='train',csv_path="./dataset/movies.csv".format(domain_type))
-    datasetVal = LLMDataset(item_size=999, max_seq_length=30,data_type='valid',csv_path="./dataset/movies.csv".format(domain_type))
-    datasetTest = LLMDataset(item_size=999, max_seq_length=30,data_type='test',csv_path="./dataset/movies.csv".format(domain_type))
+    datasetTrain = LLMDataset(item_size=999, max_seq_length=30,data_type='train',csv_path="./dataset/sport.csv".format(domain_type))
+    datasetVal = LLMDataset(item_size=999, max_seq_length=30,data_type='valid',csv_path="./dataset/sport.csv".format(domain_type))
+    datasetTest = LLMDataset(item_size=999, max_seq_length=30,data_type='test',csv_path="./dataset/sport.csv".format(domain_type))
     data_collator = SequentialCollator()
     if save_steps<0:
         save_strategy = "epoch"

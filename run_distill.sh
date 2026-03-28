@@ -31,4 +31,4 @@ CUDA_VISIBLE_DEVICES=0 python distill.py \
     --teacher_resume_from_checkpoint "$TEACHER_CHECKPOINT" \
     --distill_lambda 0.5 \
     --save_steps 500 \
-    --domain_type movies
+    --domain_type sport
