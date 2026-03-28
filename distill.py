@@ -221,13 +221,14 @@ def train(
             args=DistillationTrainingArguments(
                 per_device_train_batch_size=micro_batch_size,
                 #include_inputs_for_metrics = True,
-                gradient_accumulation_steps=1, # change it
+                gradient_accumulation_steps=batch_size // micro_batch_size, # change it
                 warmup_steps=warmup_steps,
                 num_train_epochs=num_epochs,
                 learning_rate=learning_rate,
                 dataloader_num_workers=2,
                 per_device_eval_batch_size = 128,
                 remove_unused_columns = False,
+                max_grad_norm=1.0,
                 fp16=True,
                 logging_steps=50,
                 optim="adamw_torch",
@@ -301,13 +302,14 @@ def train(
             args=DistillationTrainingArguments(
                 per_device_train_batch_size=micro_batch_size,
                 #include_inputs_for_metrics = True,
-                gradient_accumulation_steps=1, # change it
+                gradient_accumulation_steps = batch_size // micro_batch_size, # change it
                 warmup_steps=warmup_steps,
                 num_train_epochs=num_epochs,
                 learning_rate=learning_rate,
                 dataloader_num_workers=2,
                 per_device_eval_batch_size = 128,
                 remove_unused_columns = False,
+                max_grad_norm=1.0,
                 fp16=True,
                 logging_steps=50,
                 optim="adamw_torch",
@@ -416,13 +418,14 @@ def train(
                 args=DistillationTrainingArguments(
                     per_device_train_batch_size=micro_batch_size,
                     #include_inputs_for_metrics = True,
-                    gradient_accumulation_steps=1, # change it
+                    gradient_accumulation_steps = batch_size // micro_batch_size, # change it
                     warmup_steps=warmup_steps,
                     num_train_epochs=num_epochs,
                     learning_rate=learning_rate,
                     dataloader_num_workers=2,
                     per_device_eval_batch_size = 128,
                     remove_unused_columns = False,
+                    max_grad_norm=1.0,
                     fp16=True,
                     logging_steps=50,
                     optim="adamw_torch",
@@ -502,6 +505,7 @@ def train(
                     dataloader_num_workers=2,
                     per_device_eval_batch_size = 128,
                     remove_unused_columns = False,
+                    max_grad_norm=1.0,
                     fp16=True,
                     logging_steps=50,
                     optim="adamw_torch",
@@ -553,10 +557,10 @@ def train(
         ndcg5 = metrics.get("ndcg@5", 0) * 100
         mrr = metrics.get("mrr", 0) * 100
 
-        print(f"HR@1   : {hr1:.2f}")
-        print(f"HR@5   : {hr5:.2f}")
-        print(f"NDCG@5 : {ndcg5:.2f}")
-        print(f"MRR    : {mrr:.2f}")
+        hr1 = metrics.get("test_hit@1", 0) * 100
+        hr5 = metrics.get("test_hit@5", 0) * 100
+        ndcg5 = metrics.get("test_ndcg@5", 0) * 100
+        mrr = metrics.get("test_mrr", 0) * 100
 
     # Write the output data to a file
     with open(os.path.join(output_dir,"log.txt"), 'a') as file:

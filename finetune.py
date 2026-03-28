@@ -26,7 +26,7 @@ def train(
     train_stargy: str = "lora",
     # training hyperparams
     batch_size: int = 128,
-    micro_batch_size: int = 16,
+    micro_batch_size: int = 2,
     num_epochs: int = 3,
     learning_rate: float =  1e-4,
     cutoff_len: int = 512,
@@ -92,7 +92,7 @@ def train(
     # assert (
     #     base_model
     # ), "Please specify a --base_model, e.g. --base_model='huggyllama/llama-7b'"
-    gradient_accumulation_steps = 1 
+    gradient_accumulation_steps = 8
 
     prompter = Prompter(prompt_template_name)
 
@@ -166,7 +166,7 @@ def train(
         args=transformers.TrainingArguments(
             per_device_train_batch_size=micro_batch_size,
             #include_inputs_for_metrics = True,
-            gradient_accumulation_steps=1, # change it
+            gradient_accumulation_steps=8, # change it
             warmup_steps=warmup_steps,
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
@@ -174,6 +174,7 @@ def train(
             per_device_eval_batch_size = 512,
             remove_unused_columns = False,
             max_steps=max_steps,
+            max_grad_norm = 1.0,
             fp16=True,
             logging_steps=50,
             optim="adamw_torch",
@@ -228,7 +229,7 @@ def train(
         args=transformers.TrainingArguments(
             per_device_train_batch_size=micro_batch_size,
             #include_inputs_for_metrics = True,
-            gradient_accumulation_steps=1, # change it
+            gradient_accumulation_steps=8, # change it
             warmup_steps=warmup_steps,
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
@@ -236,6 +237,7 @@ def train(
             per_device_eval_batch_size = 512,
             remove_unused_columns = False,
             max_steps=max_steps,
+            max_grad_norm=1.0,
             fp16=True,
             logging_steps=50,
             optim="adamw_torch",
@@ -266,10 +268,10 @@ def train(
     if pred_out.metrics is not None:
         metrics = pred_out.metrics
 
-        hr1 = metrics.get("hit@1", 0) * 100
-        hr5 = metrics.get("hit@5", 0) * 100
-        ndcg5 = metrics.get("ndcg@5", 0) * 100
-        mrr = metrics.get("mrr", 0) * 100
+        hr1 = metrics.get("test_hit@1", 0) * 100
+        hr5 = metrics.get("test_hit@5", 0) * 100
+        ndcg5 = metrics.get("test_ndcg@5", 0) * 100
+        mrr = metrics.get("test_mrr", 0) * 100
 
         print(f"HR@1   : {hr1:.2f}")
         print(f"HR@5   : {hr5:.2f}")
