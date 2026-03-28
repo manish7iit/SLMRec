@@ -34,7 +34,7 @@ def train(
     interval_nums: int = 0,
     drop_type: str="trune",
     lr_scheduler: str = "cosine",
-    max_steps: int = 5000,
+    max_steps: int = 1000,
     warmup_steps: int = 100, 
     save_steps: int = 100000,
     eval_steps: int = 100,

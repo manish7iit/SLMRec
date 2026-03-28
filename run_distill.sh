@@ -13,7 +13,7 @@ CUDA_VISIBLE_DEVICES=0 python distill.py \
     --batch_size 32 \
     --micro_batch_size 2 \
     --num_epochs 3 \
-    --max_steps 5000 \
+    --max_steps 1000 \
     --learning_rate 5e-5 \
     --cutoff_len 512 \
     --lora_r 8 \
