@@ -26,8 +26,8 @@ def train(
     # training hyperparams
     batch_size: int = 128,
     micro_batch_size: int = 8,
-    num_epochs: int = 1,
-    learning_rate: float = 3e-4,
+    num_epochs: int = 3,
+    learning_rate: float = 1e-4,
     cutoff_len: int = 4096,
     val_set_size: int = 0,
     interval_nums: int = 0,
@@ -35,7 +35,7 @@ def train(
     lr_scheduler: str = "cosine",
     warmup_steps: int = 100, 
     max_steps: int = -1,
-    save_steps: int = 100,
+    save_steps: int = 100000,
     eval_steps: int = 100,
     # lora hyperparams
     lora_r: int = 16,
