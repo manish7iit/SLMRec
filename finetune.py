@@ -266,17 +266,8 @@ def train(
     pred_out = trainer.predict(test_dataset=datasetTest)
     output_data = {}
     if pred_out.metrics is not None:
-        metrics = pred_out.metrics
-
-        hr1 = metrics.get("test_hit@1", 0) * 100
-        hr5 = metrics.get("test_hit@5", 0) * 100
-        ndcg5 = metrics.get("test_ndcg@5", 0) * 100
-        mrr = metrics.get("test_mrr", 0) * 100
-
-        print(f"HR@1   : {hr1:.2f}")
-        print(f"HR@5   : {hr5:.2f}")
-        print(f"NDCG@5 : {ndcg5:.2f}")
-        print(f"MRR    : {mrr:.2f}")
+        for metric_name, metric_value in pred_out.metrics.items():
+            print(f"{metric_name}: {metric_value}")
 
     # Write the output data to a file
     with open(os.path.join(output_dir,"log.txt"), 'a') as file:

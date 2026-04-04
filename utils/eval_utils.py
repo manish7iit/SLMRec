@@ -68,34 +68,23 @@ def getLabel(test, pred):
     return np.array(r).astype('float')
 # ====================end Metrics=============================
 def get_sample_scores(pred_list):
-    ranks = []
-    for preds in pred_list:
-        # rank items (higher score = better)
-        sorted_idx = np.argsort(-preds)
-        # ground truth is always first position (index 0)
-        rank = np.where(sorted_idx == 0)[0][0]
-        ranks.append(rank)
-
-    ranks = np.array(ranks)
-
-    HIT_1, NDCG_1, MRR = get_metric(ranks, 1)
-    HIT_5, NDCG_5, MRR = get_metric(ranks, 5)
-    HIT_10, NDCG_10, MRR = get_metric(ranks, 10)
-
+    pred_list = (-pred_list).argsort().argsort()[:, 0]
+    HIT_1, NDCG_1, MRR = get_metric(pred_list, 1)
+    HIT_5, NDCG_5, MRR = get_metric(pred_list, 5)
+    HIT_10, NDCG_10, MRR = get_metric(pred_list, 10)
     return HIT_1, NDCG_1, HIT_5, NDCG_5, HIT_10, NDCG_10, MRR
 
-def get_metric(ranks, topk=10):
-    hits = (ranks < topk).astype(float)
-
-    ndcg = np.where(
-        ranks < topk,
-        1 / np.log2(ranks + 2),
-        0
-    )
-
-    mrr = 1 / (ranks + 1)
-
-    return hits.mean(), ndcg.mean(), mrr.mean()
+def get_metric(pred_list, topk=10):
+    NDCG = 0.0
+    HIT = 0.0
+    MRR = 0.0
+    # [batch] the answer's rank
+    for rank in pred_list:
+        MRR += 1.0 / (rank + 1.0)
+        if rank < topk:
+            NDCG += 1.0 / np.log2(rank + 2.0)
+            HIT += 1.0
+    return HIT /len(pred_list), NDCG /len(pred_list), MRR /len(pred_list)
 
 def choose_predict(predict_d1,predict_d2,domain_id):
     predict_d1_cse, predict_d2_cse = [], []
@@ -135,30 +124,18 @@ def choose_predict_overlap(predict_d1,predict_d2,domain_id,overlap_label):
 
 def compute_metrics(pred):
     logits = pred.predictions
-
-    # handle multi-output case
-    if len(logits.shape) == 3:
-        logits = logits[:, 0, :]  # take first prediction
-
+    # print("logits shape:{}".format(logits.shape))
     if np.any(np.isnan(logits)) or np.any(np.isinf(logits)):
-        return {
-            'hit@1': -1,
-            'hit@5': -1,
-            'ndcg@5': -1,
-            'hit@10': -1,
-            'ndcg@10': -1,
-            'mrr': -1,
-        }
-
-    HIT_1, NDCG_1, HIT_5, NDCG_5, HIT_10, NDCG_10, MRR = get_sample_scores(logits)
-
+        HIT_1, NDCG_1, HIT_5, NDCG_5, HIT_10, NDCG_10, MRR = -1, -1, -1, -1, -1, -1, -1
+    else:
+        HIT_1, NDCG_1, HIT_5, NDCG_5, HIT_10, NDCG_10, MRR = get_sample_scores(logits)
     return {
-        'hit@1': HIT_1,
-        'hit@5': HIT_5,
-        'ndcg@5': NDCG_5,
-        'hit@10': HIT_10,
-        'ndcg@10': NDCG_10,
-        'mrr': MRR,
+        'hit@1':HIT_1,
+        'hit@5':HIT_5,
+        'ndcg@5':NDCG_5,
+        'hit@10':HIT_10,
+        'ndcg@10':NDCG_10,
+        'mrr':MRR,
     }
 
 def compute_metrics_multiple(pred):
