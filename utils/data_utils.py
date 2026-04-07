@@ -274,28 +274,25 @@ class SASRecDataset(Dataset):
         assert len(target_neg) == self.max_len
 
         if self.data_type == "train":
-            cur_tensors = (
-                torch.tensor(user_id, dtype=torch.long),  # user_id for testing
-                torch.tensor(input_ids, dtype=torch.long),
-                torch.tensor(target_pos, dtype=torch.long),
-                torch.tensor(target_neg, dtype=torch.long),
-                torch.tensor(answer, dtype=torch.long),
-                torch.tensor(neg_samples, dtype=torch.long),
-                "train",
-            )
-            return cur_tensors
+            return {
+                "input_ids": torch.tensor(input_ids, dtype=torch.long),
+                "labels": torch.tensor(answer, dtype=torch.long),
+                "inputs": torch.tensor(input_ids, dtype=torch.long),
+                "inputs_mask": torch.tensor([1 if i > 0 else 0 for i in input_ids]),
+                "answers": torch.tensor(answer, dtype=torch.long),
+                "neg_samples": torch.tensor(neg_samples, dtype=torch.long),
+                "data_type": torch.tensor(0 if self.data_type == "train" else 1),
+            }
         else:
-            cur_tensors = (
-                torch.tensor(user_id, dtype=torch.long),  # user_id for testing
-                torch.tensor(input_ids, dtype=torch.long),
-                torch.tensor(target_pos, dtype=torch.long),
-                torch.tensor(target_neg, dtype=torch.long),
-                torch.tensor(answer, dtype=torch.long),
-                torch.tensor(neg_samples, dtype=torch.long),
-                "test",
-
-            )
-            return cur_tensors
+            return {
+                "input_ids": torch.tensor(input_ids, dtype=torch.long),
+                "labels": torch.tensor(answer, dtype=torch.long),
+                "inputs": torch.tensor(input_ids, dtype=torch.long),
+                "inputs_mask": torch.tensor([1 if i > 0 else 0 for i in input_ids]),
+                "answers": torch.tensor(answer, dtype=torch.long),
+                "neg_samples": torch.tensor(neg_samples, dtype=torch.long),
+                "data_type": torch.tensor(0 if self.data_type == "train" else 1),
+            }
 
     def __len__(self):
         return len(self.user_seq)    
