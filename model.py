@@ -203,7 +203,7 @@ class LLM4Rec(nn.Module):
 
         # Qwen2.5-3B (3B params, ~2x smaller than Mistral-7B)
         self.llama_model = AutoModel.from_pretrained(
-            "meta-llama/Llama-2-7b-hf",
+            "Qwen/Qwen2.5-3B",
             torch_dtype=torch.float16,
             cache_dir=args['cache_dir'],
             device_map=self.args['device_map']
@@ -225,7 +225,7 @@ class LLM4Rec(nn.Module):
             self.llama_model.print_trainable_parameters()
         self.llama_model.config.use_cache = False
         # self.llama_model.config.num_hidden_layers = 10
-        self.llama_tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf", use_fast=True, cache_dir=args['cache_dir'])
+        self.llama_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B", use_fast=True, cache_dir=args['cache_dir'])
         # self.llama_tokenizer = AutoTokenizer.from_pretrained(self.args['base_model'], use_fast=True, local_files_only=True, cache_dir=args['cache_dir'])
         # Qwen2.5 does not define a dedicated pad token; use EOS token instead
         self.llama_tokenizer.pad_token = self.llama_tokenizer.eos_token
