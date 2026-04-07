@@ -132,7 +132,7 @@ class RecDistillationTrainer(DistillationTrainer,SLMTrainer):
                             student_loss = student_loss + loss_multiple
                             loss_multiple_dict = {"loss_multiple":loss_multiple.item()}
                             self.log(loss_multiple_dict)
-                    loss = student_loss + self.args.distill_lambda * loss_distill
+                    loss = student_loss + loss_distill
             except:
                 loss = outputs_student['loss']
         elif self.args.distill_type_standard=="online":
@@ -186,7 +186,7 @@ class RecDistillationTrainer(DistillationTrainer,SLMTrainer):
                             loss_multiple_student_dict = {"loss_multiple_student":loss_multiple_student.item()}
                             self.log(loss_multiple_student_dict)
                     
-                    loss = student_loss + self.args.distill_lambda * loss_distill
+                    loss = student_loss + loss_distill
             except:
                 loss = outputs_student['loss']
         return (loss, outputs_student) if return_outputs else loss

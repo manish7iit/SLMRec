@@ -33,7 +33,7 @@ class Log2feats(torch.nn.Module):
     def __init__(self, user_emb_dim, item_emb_dim, seq_len):
         super(Log2feats, self).__init__()
         self.pos_emb = torch.nn.Embedding(seq_len, item_emb_dim) # TO IMPROVE
-        self.emb_dropout = torch.nn.Dropout(p=0.2)
+        self.emb_dropout = torch.nn.Dropout(p=0.5)
 
         self.attention_layernorms = torch.nn.ModuleList() # to be Q for self-attention
         self.attention_layers = torch.nn.ModuleList()
@@ -99,7 +99,7 @@ class SASRec(nn.Module):
         self.down_emb = nn.Linear(self.hid_dim,self.dim)
 
         self.pos_embedding = nn.Embedding(args.max_seq_length, self.hid_dim)
-        self.emb_dropout = nn.Dropout(p=0.2)
+        self.emb_dropout = nn.Dropout(p=0.5)
         self.dropout = 0.5
         self.attention_layernorms = nn.ModuleList()
         self.attention_layers = nn.ModuleList()

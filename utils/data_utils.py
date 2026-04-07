@@ -268,7 +268,7 @@ class SASRecDataset(Dataset):
 
         neg_items_set = self.item_pool - seq_set
         # neg_samples = random.sample(neg_items_set, self.item_size)
-        neg_samples = random.sample(list(neg_items_set), min(100, len(neg_items_set)))
+        neg_samples = random.sample(list(neg_items_set), self.item_size)
         assert len(input_ids) == self.max_len
         assert len(target_pos) == self.max_len
         assert len(target_neg) == self.max_len

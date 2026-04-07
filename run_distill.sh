@@ -12,8 +12,8 @@ CUDA_VISIBLE_DEVICES=0 python distill.py \
     --output_dir "$OUTPUT_DIR" \
     --batch_size 32 \
     --micro_batch_size 2 \
-    --num_epochs 20 \
-    --max_steps 5000 \
+    --num_epochs 3 \
+    --max_steps 1000 \
     --learning_rate 5e-5 \
     --cutoff_len 512 \
     --lora_r 8 \
@@ -26,9 +26,9 @@ CUDA_VISIBLE_DEVICES=0 python distill.py \
     --prompt_template_name alpaca \
     --warmup_steps 500 \
     --lr_scheduler cosine \
-    --llama_decoder_nums_teacher 16 \
-    --llama_decoder_nums_student 8 \
+    --llama_decoder_nums_teacher 8 \
+    --llama_decoder_nums_student 4 \
     --teacher_resume_from_checkpoint "$TEACHER_CHECKPOINT" \
-    --distill_lambda 0.1 \
+    --distill_lambda 0.5 \
     --save_steps 500 \
     --domain_type music
