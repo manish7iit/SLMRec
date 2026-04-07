@@ -14,7 +14,7 @@ from model import LLM4Rec
 from utils.data_utils import *
 from utils.eval_utils import RecallPrecision_atK, MRR_atK, MAP_atK, NDCG_atK, AUC, getLabel, compute_metrics
 from utils.train_utils import SLMTrainer
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 def train(
     # model/data params
@@ -27,14 +27,14 @@ def train(
     # training hyperparams
     batch_size: int = 128,
     micro_batch_size: int = 2,
-    num_epochs: int = 3,
+    num_epochs: int = 20,
     learning_rate: float =  1e-4,
     cutoff_len: int = 512,
     val_set_size: int = 0,
     interval_nums: int = 0,
     drop_type: str="trune",
     lr_scheduler: str = "cosine",
-    max_steps: int = 1000,
+    max_steps: int = 5000,
     warmup_steps: int = 100, 
     save_steps: int = 100000,
     eval_steps: int = 100,
@@ -145,10 +145,10 @@ def train(
         model.is_parallelizable = True
         model.model_parallel = True
     #args.include_inputs_for_metrics --> true
-    datasetTrain = LLMDataset(item_size=999, max_seq_length=30,data_type='train',csv_path="./dataset/music.csv".format(domain_type))
-    datasetVal = LLMDataset(item_size=999, max_seq_length=30,data_type='valid',csv_path="./dataset/music.csv".format(domain_type))
-    datasetTest = LLMDataset(item_size=999, max_seq_length=30,data_type='test',csv_path="./dataset/music.csv".format(domain_type))
-    data_collator = SequentialCollator()
+    datasetTrain = SASRecDataset(item_size=999, max_seq_length=50, data_type='train', csv_path="./dataset/music.csv")
+    datasetVal = SASRecDataset(item_size=999, max_seq_length=50, data_type='valid', csv_path="./dataset/music.csv")
+    datasetTest = SASRecDataset(item_size=999, max_seq_length=50, data_type='test', csv_path="./dataset/music.csv")
+    data_collator = None
     if save_steps<0:
         save_strategy = "epoch"
     else:
@@ -158,7 +158,7 @@ def train(
     else:
         evaluation_strategy = "steps"
         
-    model = model.to("cuda")
+    model = torch.nn.DataParallel(model).cuda()
     trainer = SLMTrainer(#transformers.Trainer(
         model=model,
         train_dataset=datasetTrain,
@@ -221,7 +221,7 @@ def train(
         seq_len=30,
         llama_decoder_nums=llama_decoder_nums,
     )
-    model = model.to("cuda")
+    model = torch.nn.DataParallel(model).cuda()
     trainer = SLMTrainer(#transformers.Trainer(
         model=model,
         train_dataset=datasetTrain,

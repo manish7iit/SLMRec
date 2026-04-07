@@ -119,7 +119,7 @@ def train(
     # assert (
     #     base_model
     # ), "Please specify a --base_model, e.g. --base_model='huggyllama/llama-7b'"
-    gradient_accumulation_steps = batch_size // micro_batch_size
+    gradient_accumulation_steps = 8
 
     prompter = Prompter(prompt_template_name)
 
@@ -128,7 +128,7 @@ def train(
     ddp = world_size != 1
     if ddp:
         device_map = {"": int(os.environ.get("LOCAL_RANK") or 0)}
-        gradient_accumulation_steps = gradient_accumulation_steps // world_size
+        gradient_accumulation_steps = 8
         print("gradient_accumulation_steps: ", gradient_accumulation_steps)
 
     # Check if parameter passed or if set within environ
@@ -149,10 +149,10 @@ def train(
         #model.is_parallelizable = True
         #model.model_parallel = True
     #args.include_inputs_for_metrics --> true
-    datasetTrain = LLMDataset(item_size=999, max_seq_length=30,data_type='train',csv_path="./dataset/music.csv".format(domain_type))
-    datasetVal = LLMDataset(item_size=999, max_seq_length=30,data_type='valid',csv_path="./dataset/music.csv".format(domain_type))
-    datasetTest = LLMDataset(item_size=999, max_seq_length=30,data_type='test',csv_path="./dataset/music.csv".format(domain_type))
-    data_collator = SequentialCollator()
+    datasetTrain = SASRecDataset(item_size=999, max_seq_length=50, data_type='train', csv_path="./dataset/music.csv")
+    datasetVal = SASRecDataset(item_size=999, max_seq_length=50, data_type='valid', csv_path="./dataset/music.csv")
+    datasetTest = SASRecDataset(item_size=999, max_seq_length=50, data_type='test', csv_path="./dataset/music.csv")
+    data_collator = None
     if save_steps<0:
         save_strategy = "epoch"
     else:
@@ -180,7 +180,7 @@ def train(
             train_stargy = train_stargy,
             user_embeds=None,
             input_embeds=item_embed,
-            seq_len=30,
+            seq_len=50,
             llama_decoder_nums=llama_decoder_nums_teacher,
             # llama_decoder_nums_teacher=llama_decoder_nums_teacher,
             # llama_decoder_nums_student=llama_decoder_nums_student,
@@ -203,7 +203,7 @@ def train(
             train_stargy = train_stargy,
             user_embeds=None,
             input_embeds=item_embed,
-            seq_len=30,
+            seq_len=50,
             llama_decoder_nums=llama_decoder_nums_student,
             distill_block=distill_block,
             is_cls_multiple=is_cls_multiple,
@@ -211,17 +211,18 @@ def train(
             # llama_decoder_nums_student=llama_decoder_nums_student,
             # distill_lambda=distill_lambda,
         )
-        model_teacher = model_teacher.to("cuda")
-        model = model.to("cuda")
+
+        model_teacher = torch.nn.DataParallel(model_teacher).cuda()
+        model = torch.nn.DataParallel(model).cuda()
         trainer = RecDistillationTrainer(#transformers.Trainer(
             teacher_model=model_teacher,
             model=model,
             train_dataset=datasetTrain,
-            eval_dataset=None,
+            eval_dataset=datasetVal,
             args=DistillationTrainingArguments(
                 per_device_train_batch_size=micro_batch_size,
                 #include_inputs_for_metrics = True,
-                gradient_accumulation_steps=batch_size // micro_batch_size, # change it
+                gradient_accumulation_steps=8, # change it
                 warmup_steps=warmup_steps,
                 num_train_epochs=num_epochs,
                 learning_rate=learning_rate,
@@ -243,7 +244,8 @@ def train(
                 logging_dir = output_dir,
                 output_dir=output_dir,
                 save_total_limit=2,
-                load_best_model_at_end=False,#True if val_set_size > 0 else False,
+                load_best_model_at_end=True,
+                evaluation_strategy="steps",#True if val_set_size > 0 else False,
                 ddp_find_unused_parameters=False if ddp else None,
                 # use_reentrant=True,
                 group_by_length=group_by_length,
@@ -284,7 +286,7 @@ def train(
             train_stargy = train_stargy,
             user_embeds=None,
             item_embed=item_embed,
-            seq_len=30,
+            seq_len=50,
             llama_decoder_nums=llama_decoder_nums_teacher,
             llama_decoder_nums_teacher=llama_decoder_nums_teacher,
             llama_decoder_nums_student=llama_decoder_nums_student,
@@ -298,11 +300,11 @@ def train(
             teacher_model=None, #cover in student model
             model=model,
             train_dataset=datasetTrain,
-            eval_dataset=None,
+            eval_dataset=datasetVal,
             args=DistillationTrainingArguments(
                 per_device_train_batch_size=micro_batch_size,
                 #include_inputs_for_metrics = True,
-                gradient_accumulation_steps = batch_size // micro_batch_size, # change it
+                gradient_accumulation_steps = 8, # change it
                 warmup_steps=warmup_steps,
                 num_train_epochs=num_epochs,
                 learning_rate=learning_rate,
@@ -324,7 +326,8 @@ def train(
                 logging_dir = output_dir,
                 output_dir=output_dir,
                 save_total_limit=2,
-                load_best_model_at_end=False,#True if val_set_size > 0 else False,
+                load_best_model_at_end=True,
+                evaluation_strategy="steps",#True if val_set_size > 0 else False,
                 ddp_find_unused_parameters=False if ddp else None,
                 # use_reentrant=True,
                 group_by_length=group_by_length,
@@ -379,7 +382,7 @@ def train(
                 train_stargy = train_stargy,
                 user_embeds=None,
                 input_embeds=item_embed,
-                seq_len=30,
+                seq_len=50,
                 llama_decoder_nums=llama_decoder_nums_teacher,
                 # llama_decoder_nums_teacher=llama_decoder_nums_teacher,
                 # llama_decoder_nums_student=llama_decoder_nums_student,
@@ -402,7 +405,7 @@ def train(
                 train_stargy = train_stargy,
                 user_embeds=None,
                 input_embeds=item_embed,
-                seq_len=30,
+                seq_len=50,
                 llama_decoder_nums=llama_decoder_nums_student,
                 distill_block=distill_block,
                 is_cls_multiple=is_cls_multiple,
@@ -414,11 +417,11 @@ def train(
                 teacher_model=model_teacher,
                 model=model,
                 train_dataset=datasetTrain,
-                eval_dataset=None,
+                eval_dataset=datasetVal,
                 args=DistillationTrainingArguments(
                     per_device_train_batch_size=micro_batch_size,
                     #include_inputs_for_metrics = True,
-                    gradient_accumulation_steps = batch_size // micro_batch_size, # change it
+                    gradient_accumulation_steps = 8, # change it
                     warmup_steps=warmup_steps,
                     num_train_epochs=num_epochs,
                     learning_rate=learning_rate,
@@ -440,7 +443,8 @@ def train(
                     logging_dir = output_dir,
                     output_dir=output_dir,
                     save_total_limit=2,
-                    load_best_model_at_end=False,#True if val_set_size > 0 else False,
+                    load_best_model_at_end=True,
+                    evaluation_strategy="steps",#True if val_set_size > 0 else False,
                     ddp_find_unused_parameters=False if ddp else None,
                     # use_reentrant=True,
                     group_by_length=group_by_length,
@@ -481,7 +485,7 @@ def train(
                 train_stargy = train_stargy,
                 user_embeds=None,
                 item_embed=item_embed,
-                seq_len=30,
+                seq_len=50,
                 llama_decoder_nums=llama_decoder_nums_teacher,
                 llama_decoder_nums_teacher=llama_decoder_nums_teacher,
                 llama_decoder_nums_student=llama_decoder_nums_student,
@@ -494,11 +498,11 @@ def train(
                 teacher_model=None, #cover in student model
                 model=model,
                 train_dataset=datasetTrain,
-                eval_dataset=None,
+                eval_dataset=datasetVal,
                 args=DistillationTrainingArguments(
                     per_device_train_batch_size=micro_batch_size,
                     #include_inputs_for_metrics = True,
-                    gradient_accumulation_steps=1, # change it
+                    gradient_accumulation_steps=8, # change it
                     warmup_steps=warmup_steps,
                     num_train_epochs=num_epochs,
                     learning_rate=learning_rate,
@@ -520,7 +524,8 @@ def train(
                     logging_dir = output_dir,
                     output_dir=output_dir,
                     save_total_limit=2,
-                    load_best_model_at_end=False,#True if val_set_size > 0 else False,
+                    load_best_model_at_end=True,
+                    evaluation_strategy="steps",#True if val_set_size > 0 else False,
                     ddp_find_unused_parameters=False if ddp else None,
                     # use_reentrant=True,
                     group_by_length=group_by_length,

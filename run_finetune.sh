@@ -11,8 +11,8 @@ CUDA_LAUNCH_BLOCKING=1 python finetune.py \
     --task_type sequential \
     --cache_dir cache_dir/ \
     --output_dir "$OUTPUT_DIR" \
-    --batch_size 32 \
-    --micro_batch_size 2 \
+    --batch_size 64 \
+    --micro_batch_size 4 \
     --num_epochs 3 \
     --learning_rate 5e-5 \
     --cutoff_len 512 \
