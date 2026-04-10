@@ -14,7 +14,7 @@ CUDA_LAUNCH_BLOCKING=1 python finetune.py \
     --batch_size 32 \
     --micro_batch_size 2 \
     --num_epochs 3 \
-    --learning_rate 1e-4 \
+    --learning_rate 5e-5 \
     --cutoff_len 512 \
     --lora_r 8 \
     --lora_alpha 16 \
@@ -26,4 +26,4 @@ CUDA_LAUNCH_BLOCKING=1 python finetune.py \
     --prompt_template_name alpaca \
     --warmup_steps 500 \
     --lr_scheduler 'cosine' \
-    --llama_decoder_nums 16
+    --llama_decoder_nums 8

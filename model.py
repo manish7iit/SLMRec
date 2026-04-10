@@ -33,7 +33,7 @@ class Log2feats(torch.nn.Module):
     def __init__(self, user_emb_dim, item_emb_dim, seq_len):
         super(Log2feats, self).__init__()
         self.pos_emb = torch.nn.Embedding(seq_len, item_emb_dim) # TO IMPROVE
-        self.emb_dropout = torch.nn.Dropout(p=0.2)
+        self.emb_dropout = torch.nn.Dropout(p=0.5)
 
         self.attention_layernorms = torch.nn.ModuleList() # to be Q for self-attention
         self.attention_layers = torch.nn.ModuleList()
@@ -99,7 +99,7 @@ class SASRec(nn.Module):
         self.down_emb = nn.Linear(self.hid_dim,self.dim)
 
         self.pos_embedding = nn.Embedding(args.max_seq_length, self.hid_dim)
-        self.emb_dropout = nn.Dropout(p=0.2)
+        self.emb_dropout = nn.Dropout(p=0.5)
         self.dropout = 0.5
         self.attention_layernorms = nn.ModuleList()
         self.attention_layers = nn.ModuleList()
@@ -273,7 +273,6 @@ class LLM4Rec(nn.Module):
         if output_logits:
             pooled_output = outputs.last_hidden_state[:, -1]#outputs.hidden_states[-10][:, -1]#outputs.last_hidden_state[:, -1]
             pooled_logits = self.score(pooled_output)
-            pooled_logits = F.normalize(pooled_logits, dim=-1)
         if not output_hidden_states:
             return pooled_logits
         else:
@@ -311,53 +310,49 @@ class LLM4Rec(nn.Module):
         # pooled_logits = self.multiple_predict(inputs, inputs_mask)#self.predict(inputs, inputs_mask) #[b,emb_dim]
 
         loss = None
-        if torch.max(data_type).item() == 0:
+        if torch.max(data_type).item() ==0: # all item ce loss
             pooled_logits = self.predict(inputs, inputs_mask)
-            test_item_emb = F.normalize(self.input_embeds.weight, dim=-1)
-
-            logits = torch.matmul(pooled_logits, test_item_emb.transpose(0, 1)) / 0.07
+            test_item_emb = self.input_embeds.weight
+            logits = torch.matmul(pooled_logits, test_item_emb.transpose(0, 1))
             loss = self.loss(logits, answers.squeeze(-1))
+            predict = None
+        elif torch.max(data_type).item() ==1: #predict sample negative , bce loss
+            pooled_logits = self.predict(inputs, inputs_mask)
+            log_feats = pooled_logits.unsqueeze(1)
+            pos_embs = self.input_embeds(answers)
+            neg_embs = self.input_embeds(neg_samples)
+            pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
+            neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
 
-            predict = logits  # ✅ CRITICAL FIX
-        # elif torch.max(data_type).item() ==1: #predict sample negative , bce loss
-        #     pooled_logits = self.predict(inputs, inputs_mask)
-        #     log_feats = pooled_logits.unsqueeze(1)
-        #     pos_embs = self.input_embeds(answers)
-        #     neg_embs = self.input_embeds(neg_samples)
-        #     # pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
-        #     # neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
-        #
-        #     pos_label = torch.ones_like(pos_logits).cuda()
-        #     neg_label = torch.zeros_like(neg_logits).cuda()
-        #     loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
-        #     loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
-        #     loss = loss_real + loss_false
-        #     # predict = torch.cat((pos_logits,neg_logits),-1).squeeze()#.squeeze().cpu().detach().numpy().copy()
-        #     logits = torch.matmul(pooled_logits, self.input_embeds.weight.T)
-        #     predict = logits
-        # elif torch.max(data_type).item() ==2: # 33 [512,99,4096]
-        #     pooled_logits = self.multiple_predict(inputs, inputs_mask)
-        #     pos_embs = self.input_embeds(answers).permute(0, 2, 1)
-        #     neg_embs = self.input_embeds(neg_samples).permute(0, 2, 1)
-        #     loss = list()
-        #     predict = list()
-        #     for log_feats in pooled_logits: # 33*loop
-        #         pos_logits = torch.matmul(log_feats, pos_embs)
-        #         neg_logits = torch.matmul(log_feats, neg_embs)
-        #         loss_tmp = None
-        #         pos_label = torch.ones_like(pos_logits).cuda()
-        #         neg_label = torch.zeros_like(neg_logits).cuda()
-        #         loss_real = nn.BCEWithLogitsLoss(reduce=False)(pos_logits, pos_label)
-        #         loss_false = nn.BCEWithLogitsLoss(reduce=False)(neg_logits, neg_label)
-        #         loss_tmp = torch.mean(loss_real,-1) + torch.mean(loss_false,-1)
-        #         loss.append(loss_tmp)
-        #         predict_tmp = torch.cat((pos_logits,neg_logits),-1).squeeze()
-        #         predict.append(predict_tmp)
-        #     loss = torch.stack(loss,dim=1)
-        #     predict = torch.stack(predict,dim=1)
-        #     predict = torch.cat((predict,loss),-1)[:,-10:,:].contiguous() # [bs,33,1000+1]
+            pos_label = torch.ones_like(pos_logits).cuda()
+            neg_label = torch.zeros_like(neg_logits).cuda()
+            loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
+            loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
+            loss = loss_real + loss_false
+            predict = torch.cat((pos_logits,neg_logits),-1).squeeze()#.squeeze().cpu().detach().numpy().copy()
+        elif torch.max(data_type).item() ==2: # 33 [512,99,4096]
+            pooled_logits = self.multiple_predict(inputs, inputs_mask)
+            pos_embs = self.input_embeds(answers).permute(0, 2, 1)
+            neg_embs = self.input_embeds(neg_samples).permute(0, 2, 1)
+            loss = list()
+            predict = list()
+            for log_feats in pooled_logits: # 33*loop
+                pos_logits = torch.matmul(log_feats, pos_embs)
+                neg_logits = torch.matmul(log_feats, neg_embs)
+                loss_tmp = None
+                pos_label = torch.ones_like(pos_logits).cuda()
+                neg_label = torch.zeros_like(neg_logits).cuda()
+                loss_real = nn.BCEWithLogitsLoss(reduce=False)(pos_logits, pos_label)
+                loss_false = nn.BCEWithLogitsLoss(reduce=False)(neg_logits, neg_label)
+                loss_tmp = torch.mean(loss_real,-1) + torch.mean(loss_false,-1)
+                loss.append(loss_tmp)
+                predict_tmp = torch.cat((pos_logits,neg_logits),-1).squeeze()
+                predict.append(predict_tmp)
+            loss = torch.stack(loss,dim=1)
+            predict = torch.stack(predict,dim=1)
+            predict = torch.cat((predict,loss),-1)[:,-10:,:].contiguous() # [bs,33,1000+1]
         return { 'loss':loss,
-                 'logits': predict,
+            'logits': predict,
         }
 
 class LLM4RecTeacher(LLM4Rec):
@@ -365,10 +360,10 @@ class LLM4RecTeacher(LLM4Rec):
         loss = None
         if torch.max(data_type).item() ==0: # all item ce loss
             pooled_logits = self.predict(inputs, inputs_mask)
-            test_item_emb = F.normalize(self.input_embeds.weight, dim=-1)
-            logits = torch.matmul(pooled_logits, test_item_emb.transpose(0, 1)) / 0.07
+            test_item_emb = self.input_embeds.weight
+            logits = torch.matmul(pooled_logits, test_item_emb.transpose(0, 1))
             loss = self.loss(logits, answers.squeeze(-1))
-            predict = logits
+            predict = None
         elif torch.max(data_type).item() ==1: #predict sample negative , bce loss
             pooled_logits = self.predict(inputs, inputs_mask)
             log_feats = pooled_logits.unsqueeze(1)
@@ -423,8 +418,8 @@ class LLM4RecStudent(LLM4Rec):
         loss = None
         if torch.max(data_type).item() ==0: # all item ce loss
             pooled_logits,student_output_states = self.predict(inputs, inputs_mask,output_hidden_states=True,output_logits=True)
-            test_item_emb = F.normalize(self.input_embeds.weight, dim=-1)
-            logits = torch.matmul(pooled_logits, test_item_emb.transpose(0, 1)) / 0.07
+            test_item_emb = self.input_embeds.weight
+            logits = torch.matmul(pooled_logits, test_item_emb.transpose(0, 1))
             loss = self.loss(logits, answers.squeeze(-1))
             predict = logits
             loss_cls_multiple = 0
@@ -440,23 +435,23 @@ class LLM4RecStudent(LLM4Rec):
                 'data_type':data_type,
                 'loss_cls_multiple':loss_cls_multiple,
             }
-        # elif torch.max(data_type).item() ==1: #predict sample negative , bce loss
-        #     pooled_logits = self.predict(inputs, inputs_mask)
-        #     log_feats = pooled_logits.unsqueeze(1)
-        #     pos_embs = self.input_embeds(answers)
-        #     neg_embs = self.input_embeds(neg_samples)
-        #     pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
-        #     neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
-        #
-        #     pos_label = torch.ones_like(pos_logits).cuda()
-        #     neg_label = torch.zeros_like(neg_logits).cuda()
-        #     loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
-        #     loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
-        #     loss = loss_real + loss_false
-        #     predict = torch.cat((pos_logits,neg_logits),-1).squeeze()#.squeeze().cpu().detach().numpy().copy()
-        #     return { 'loss':loss,
-        #         'logits': predict,
-        #     }
+        elif torch.max(data_type).item() ==1: #predict sample negative , bce loss
+            pooled_logits = self.predict(inputs, inputs_mask)
+            log_feats = pooled_logits.unsqueeze(1)
+            pos_embs = self.input_embeds(answers)
+            neg_embs = self.input_embeds(neg_samples)
+            pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
+            neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
+
+            pos_label = torch.ones_like(pos_logits).cuda()
+            neg_label = torch.zeros_like(neg_logits).cuda()
+            loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
+            loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
+            loss = loss_real + loss_false
+            predict = torch.cat((pos_logits,neg_logits),-1).squeeze()#.squeeze().cpu().detach().numpy().copy()
+            return { 'loss':loss,
+                'logits': predict,
+            }
 
 
 class LLM4RecDistill(nn.Module):
@@ -503,9 +498,6 @@ class LLM4RecDistill(nn.Module):
             seq_len=30,
             llama_decoder_nums=self.args['llama_decoder_nums_student'],
         )
-
-        for param in self.model_teacher.parameters():
-            param.requires_grad = False
         self.teacher_block = self.args['llama_decoder_nums_teacher']//4
         self.student_block = self.args['llama_decoder_nums_student']//4
         self.distill_lambda = self.args['distill_lambda']
@@ -536,25 +528,11 @@ class LLM4RecDistill(nn.Module):
         if torch.max(data_type).item() ==0: # all item ce loss 
             # self.model_student._set_static_graph(True)
             teacher_output_states,student_hidden_states,pooled_logits_teacher,pooled_logits_student = self.predict(inputs, inputs_mask)
-            # test_item_emb = self.model_student.input_embeds.weight
-            test_item_emb = F.normalize(self.model_student.input_embeds.weight, dim=-1)
-            logits_teacher = torch.matmul(pooled_logits_teacher, test_item_emb.T) / 0.07
-            logits_student = torch.matmul(pooled_logits_student, test_item_emb.T) / 0.07
-            # loss = self.loss_cls(logits_teacher, answers.squeeze(-1)) + self.loss_cls(logits_student, answers.squeeze(-1))
-            T = 2.0  # temperature
-
-            # CE loss (ground truth)
-            loss_gt = self.loss_cls(logits_student, answers.squeeze(-1))
-
-            # KL distillation loss
-            student_log = F.log_softmax(logits_student / T, dim=-1)
-            teacher_prob = F.softmax(logits_teacher / T, dim=-1)
-
-            loss_kd = F.kl_div(student_log, teacher_prob, reduction='batchmean') * (T * T)
-
-            # final loss
-            loss = (1 - self.distill_lambda) * loss_gt + self.distill_lambda * loss_kd
-            predict = logits_student
+            test_item_emb = self.model_student.input_embeds.weight
+            logits_teacher = torch.matmul(pooled_logits_teacher, test_item_emb.transpose(0, 1))
+            logits_student = torch.matmul(pooled_logits_student, test_item_emb.transpose(0, 1))
+            loss = self.loss_cls(logits_teacher, answers.squeeze(-1)) + self.loss_cls(logits_student, answers.squeeze(-1)) 
+            predict = None
             loss_cls_multiple_teacher, loss_cls_multiple_student = 0, 0
             logits_teacher_concat, logits_student_concat = list(), list()
             if self.args['is_cls_multiple_teacher']:
