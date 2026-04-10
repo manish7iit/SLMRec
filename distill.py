@@ -149,9 +149,16 @@ def train(
         #model.is_parallelizable = True
         #model.model_parallel = True
     #args.include_inputs_for_metrics --> true
-    datasetTrain = LLMDataset(item_size=999, max_seq_length=30,data_type='train',csv_path="./dataset/music.csv".format(domain_type))
-    datasetVal = LLMDataset(item_size=999, max_seq_length=30,data_type='valid',csv_path="./dataset/music.csv".format(domain_type))
-    datasetTest = LLMDataset(item_size=999, max_seq_length=30,data_type='test',csv_path="./dataset/music.csv".format(domain_type))
+    datasetTrain = LLMDataset(item_size=0, max_seq_length=30, data_type='train', csv_path="./dataset/music.csv")
+    datasetVal = LLMDataset(item_size=0, max_seq_length=30, data_type='valid', csv_path="./dataset/music.csv")
+    datasetTest = LLMDataset(item_size=0, max_seq_length=30, data_type='test', csv_path="./dataset/music.csv")
+
+    # dynamically set item size
+    item_size = datasetTrain.m_item
+
+    datasetTrain.item_size = item_size
+    datasetVal.item_size = item_size
+    datasetTest.item_size = item_size
     data_collator = SequentialCollator()
     if save_steps<0:
         save_strategy = "epoch"
@@ -185,7 +192,11 @@ def train(
             # llama_decoder_nums_teacher=llama_decoder_nums_teacher,
             # llama_decoder_nums_student=llama_decoder_nums_student,
             # distill_lambda=distill_lambda,
-        )      
+        )
+        if teacher_resume_from_checkpoint is not None:
+            print("Loading teacher checkpoint...")
+            state_dict = torch.load(teacher_resume_from_checkpoint, map_location="cuda")
+            model_teacher.load_state_dict(state_dict, strict=False)
         model = LLM4RecStudent(
             base_model=base_model,
             task_type=task_type,
@@ -217,7 +228,7 @@ def train(
             teacher_model=model_teacher,
             model=model,
             train_dataset=datasetTrain,
-            eval_dataset=None,
+            eval_dataset=datasetVal,
             args=DistillationTrainingArguments(
                 per_device_train_batch_size=micro_batch_size,
                 #include_inputs_for_metrics = True,
@@ -243,7 +254,9 @@ def train(
                 logging_dir = output_dir,
                 output_dir=output_dir,
                 save_total_limit=2,
-                load_best_model_at_end=False,#True if val_set_size > 0 else False,
+                evaluation_strategy="steps",
+                load_best_model_at_end=True,
+                metric_for_best_model="ndcg_10",
                 ddp_find_unused_parameters=False if ddp else None,
                 # use_reentrant=True,
                 group_by_length=group_by_length,
@@ -298,7 +311,7 @@ def train(
             teacher_model=None, #cover in student model
             model=model,
             train_dataset=datasetTrain,
-            eval_dataset=None,
+            eval_dataset=datasetVal,
             args=DistillationTrainingArguments(
                 per_device_train_batch_size=micro_batch_size,
                 #include_inputs_for_metrics = True,
@@ -324,7 +337,9 @@ def train(
                 logging_dir = output_dir,
                 output_dir=output_dir,
                 save_total_limit=2,
-                load_best_model_at_end=False,#True if val_set_size > 0 else False,
+                evaluation_strategy="steps",
+                load_best_model_at_end=True,
+                metric_for_best_model="ndcg_10",
                 ddp_find_unused_parameters=False if ddp else None,
                 # use_reentrant=True,
                 group_by_length=group_by_length,
@@ -384,7 +399,11 @@ def train(
                 # llama_decoder_nums_teacher=llama_decoder_nums_teacher,
                 # llama_decoder_nums_student=llama_decoder_nums_student,
                 # distill_lambda=distill_lambda,
-            )      
+            )
+            if teacher_resume_from_checkpoint is not None:
+                print("Loading teacher checkpoint...")
+                state_dict = torch.load(teacher_resume_from_checkpoint, map_location="cuda")
+                model_teacher.load_state_dict(state_dict, strict=False)
             model = LLM4RecStudent(
                 base_model=base_model,
                 task_type=task_type,
@@ -414,7 +433,7 @@ def train(
                 teacher_model=model_teacher,
                 model=model,
                 train_dataset=datasetTrain,
-                eval_dataset=None,
+                eval_dataset=datasetVal,
                 args=DistillationTrainingArguments(
                     per_device_train_batch_size=micro_batch_size,
                     #include_inputs_for_metrics = True,
@@ -440,7 +459,9 @@ def train(
                     logging_dir = output_dir,
                     output_dir=output_dir,
                     save_total_limit=2,
-                    load_best_model_at_end=False,#True if val_set_size > 0 else False,
+                    evaluation_strategy="steps",
+                    load_best_model_at_end=True,
+                    metric_for_best_model="ndcg_10",
                     ddp_find_unused_parameters=False if ddp else None,
                     # use_reentrant=True,
                     group_by_length=group_by_length,
@@ -494,7 +515,7 @@ def train(
                 teacher_model=None, #cover in student model
                 model=model,
                 train_dataset=datasetTrain,
-                eval_dataset=None,
+                eval_dataset=datasetVal,
                 args=DistillationTrainingArguments(
                     per_device_train_batch_size=micro_batch_size,
                     #include_inputs_for_metrics = True,
@@ -512,6 +533,9 @@ def train(
                     #metric_for_best_model="mrr",
                     # evaluation_strategy="steps", #if val_set_size > 0 else "no",
                     #evaluation_strategy=evaluation_strategy, # epoch
+                    evaluation_strategy="steps",
+                    load_best_model_at_end=True,
+                    metric_for_best_model="ndcg_10",
                     save_strategy=save_strategy,
                     eval_steps=eval_steps,
                     save_steps=save_steps,
@@ -520,7 +544,7 @@ def train(
                     logging_dir = output_dir,
                     output_dir=output_dir,
                     save_total_limit=2,
-                    load_best_model_at_end=False,#True if val_set_size > 0 else False,
+                    # load_best_model_at_end=False,#True if val_set_size > 0 else False,
                     ddp_find_unused_parameters=False if ddp else None,
                     # use_reentrant=True,
                     group_by_length=group_by_length,
