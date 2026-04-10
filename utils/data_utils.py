@@ -37,6 +37,7 @@ class SRDatasetText(Dataset):
         self.neg_nums = neg_nums
         self.long_length = long_length
         self.pad_id = pad_id
+        self.isTrain = (self.data_type == "train")
 
     def __return_tailed_length__(self,seq):
         lengths = seq.apply(lambda x: len(json.loads(x)) if len(json.loads(x)) > 2 else None)  # 将 JSON 字符串转换为列表并计算长度，仅限列表长度大于2的情况
@@ -60,14 +61,14 @@ class SRDatasetText(Dataset):
         return len(self.reviewerID)
 
     def __getitem__(self, idx):
-        print(f"Collating batch of {len(idx)} indexes")
-        print(f"Process {os.getpid()} handling batch")
+        # print(f"Collating batch of {len(idx)} indexes")
+        # print(f"Process {os.getpid()} handling batch")
         
         user_node = self.reviewerID[idx]
         seq_tmp = json.loads(self.asin[idx])
         title_tmp = self.title[idx]
         label = list()
-        # neg_items_set = self.item_pool - set(seq_tmp) # neglect
+        neg_items_set = list(self.item_pool - set(seq_tmp))
         if len(seq_tmp)>self.tail_len:
             tailed_label_tmp = 0
         else:

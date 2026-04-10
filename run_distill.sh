@@ -29,6 +29,7 @@ CUDA_VISIBLE_DEVICES=0 python distill.py \
     --llama_decoder_nums_teacher 8 \
     --llama_decoder_nums_student 4 \
     --teacher_resume_from_checkpoint "$TEACHER_CHECKPOINT" \
-    --distill_lambda 0.5 \
+    --distill_lambda 0.7 \
     --save_steps 500 \
     --domain_type music
+    --kd_loss_type logit
