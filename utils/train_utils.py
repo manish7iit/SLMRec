@@ -107,14 +107,6 @@ class RecDistillationTrainer(DistillationTrainer,SLMTrainer):
             try:
                 if(torch.max(outputs_student['data_type']).item() ==0):
                     student_loss = outputs_student['loss']
-
-                    # ADD THIS BLOCK
-                    if 'logits' in outputs_student:
-                        logits = outputs_student['logits']
-                        labels = inputs.get("labels", None)
-                        if labels is not None:
-                            ce_loss = F.cross_entropy(logits, labels.squeeze())
-                            student_loss = student_loss + ce_loss
                     # compute teacher output
                     with torch.no_grad():
                         outputs_teacher = self.teacher(**inputs)
@@ -153,14 +145,6 @@ class RecDistillationTrainer(DistillationTrainer,SLMTrainer):
             try:
                 if torch.max(outputs_student['data_type']).item() ==0:
                     student_loss = outputs_student['loss']
-
-                    # ADD THIS BLOCK
-                    if 'logits' in outputs_student:
-                        logits = outputs_student['logits']
-                        labels = inputs.get("labels", None)
-                        if labels is not None:
-                            ce_loss = F.cross_entropy(logits, labels.squeeze())
-                            student_loss = student_loss + ce_loss
                     teacher_output_states = outputs_student['teacher_output_states']
                     student_hidden_states = outputs_student['student_output_states']
 
