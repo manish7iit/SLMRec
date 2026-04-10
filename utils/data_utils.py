@@ -56,9 +56,13 @@ class SRDatasetText(Dataset):
         return item_pool_d1
 
     def __len__(self):
+        print("dataset len:{}\n".format(len(self.reviewerID)))
         return len(self.reviewerID)
 
     def __getitem__(self, idx):
+        print(f"Collating batch of {len(idx)} indexes")
+        print(f"Process {os.getpid()} handling batch")
+        
         user_node = self.reviewerID[idx]
         seq_tmp = json.loads(self.asin[idx])
         title_tmp = self.title[idx]
@@ -195,8 +199,6 @@ class SASRecDataset(Dataset):
         # self.title = self.df['title'].tolist()
         self.tail_len = self.__return_tailed_length__(self.df['asin'])
         self.item_pool = self.__build_i_set__(self.user_seq)     
-        self.item_pool_list = tuple(self.item_pool)
-        self.neg_items_cache = {}
         self.seq_len = max_seq_length
 
     def __return_tailed_length__(self,seq):
@@ -264,14 +266,9 @@ class SASRecDataset(Dataset):
         target_pos = target_pos[-self.max_len:]
         target_neg = target_neg[-self.max_len:]
 
-        neg_items_list = self.neg_items_cache.get(index)
-        if neg_items_list is None:
-            neg_items_list = [item for item in self.item_pool_list if item not in seq_set]
-            self.neg_items_cache[index] = neg_items_list
-        if len(neg_items_list) >= self.item_size:
-            neg_samples = random.sample(neg_items_list, self.item_size)
-        else:
-            neg_samples = random.choices(neg_items_list, k=self.item_size)
+        neg_items_set = self.item_pool - seq_set
+        # neg_samples = random.sample(neg_items_set, self.item_size)
+        neg_samples = random.sample(list(neg_items_set), self.item_size)
         assert len(input_ids) == self.max_len
         assert len(target_pos) == self.max_len
         assert len(target_neg) == self.max_len
@@ -324,8 +321,6 @@ class LLMDataset(Dataset):
         # self.title = self.df['title'].tolist()
         self.tail_len = self.__return_tailed_length__(self.df['asin'])
         self.item_pool = self.__build_i_set__(self.user_seq)     
-        self.item_pool_list = tuple(self.item_pool)
-        self.neg_items_cache = {}
         self.seq_len = max_seq_length
 
     def __return_tailed_length__(self,seq):
@@ -393,10 +388,8 @@ class LLMDataset(Dataset):
         target_pos = target_pos[-self.max_len:]
         target_neg = target_neg[-self.max_len:]
 
-        neg_items_list = self.neg_items_cache.get(index)
-        if neg_items_list is None:
-            neg_items_list = [item for item in self.item_pool_list if item not in seq_set]
-            self.neg_items_cache[index] = neg_items_list
+        neg_items_set = self.item_pool - seq_set
+        neg_items_list = list(neg_items_set)
 
         if len(neg_items_list) >= self.item_size:
             neg_samples = random.sample(neg_items_list, self.item_size)

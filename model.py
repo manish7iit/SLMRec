@@ -59,15 +59,15 @@ class Log2feats(torch.nn.Module):
 
     def forward(self, log_seqs):
         seqs = log_seqs
-        positions = torch.arange(log_seqs.shape[1], device=log_seqs.device).unsqueeze(0).expand(log_seqs.shape[0], -1)
-        seqs += self.pos_emb(positions)
+        positions = np.tile(np.array(range(log_seqs.shape[1])), [log_seqs.shape[0], 1])
+        seqs += self.pos_emb(torch.LongTensor(positions).cuda())
         seqs = self.emb_dropout(seqs)
 
-        timeline_mask = log_seqs.abs().sum(dim=-1).eq(0).unsqueeze(-1)
+        timeline_mask = torch.BoolTensor(log_seqs.cpu() == 0).cuda()
         seqs *= ~timeline_mask # broadcast in last dim
 
         tl = seqs.shape[1] # time dim len for enforce causality
-        attention_mask = ~torch.tril(torch.ones((tl, tl), dtype=torch.bool, device=log_seqs.device))
+        attention_mask = ~torch.tril(torch.ones((tl, tl), dtype=torch.bool, device="cuda"))
 
         for i in range(len(self.attention_layers)):
             seqs = torch.transpose(seqs, 0, 1)
@@ -127,21 +127,17 @@ class SASRec(nn.Module):
         self.loss = torch.nn.CrossEntropyLoss()
         self.act = nn.Sigmoid()
 
-    def log2feats(self, log_seq, seq_ids=None):
+    def log2feats(self, log_seq):
         seqs = log_seq
         seqs *= self.dim ** 0.5
-        positions = torch.arange(log_seq.shape[1], device=log_seq.device).unsqueeze(0).expand(log_seq.shape[0], -1)
-        seqs += self.pos_embedding(positions)
+        positions = np.tile(np.array(range(log_seq.shape[1])), [log_seq.shape[0], 1])
+        seqs += self.pos_embedding(torch.LongTensor(positions).to(self.device))
         seqs = self.emb_dropout(seqs)
 
-        if seq_ids is None:
-            timeline_mask = log_seq.abs().sum(dim=-1).eq(0)
-        else:
-            timeline_mask = seq_ids.eq(0)
-        timeline_mask = timeline_mask.unsqueeze(-1)
+        timeline_mask = torch.BoolTensor(log_seq.cpu() == 0).to(self.device)
         seqs *= ~timeline_mask
         tl = seqs.shape[1]
-        attention_mask = ~torch.tril(torch.ones((tl, tl), dtype=torch.bool, device=log_seq.device))
+        attention_mask = ~torch.tril(torch.ones((tl, tl), dtype=torch.bool, device=self.device))
 
         for i in range(len(self.attention_layers)):
             Q = self.attention_layernorms[i](seqs)
@@ -158,9 +154,8 @@ class SASRec(nn.Module):
         return log_feats
     
     def predict_sample(self, seq, pos, neg):
-        seq_ids = seq
         seq = self.up_emb(self.embedding(seq))
-        log_feats = self.log2feats(seq, seq_ids=seq_ids)
+        log_feats = self.log2feats(seq)
         seq_output = self.down_emb(log_feats[:, -1, :]).unsqueeze(1)
         pos_embs = self.embedding(pos)
         neg_embs = self.embedding(neg)
@@ -170,19 +165,19 @@ class SASRec(nn.Module):
         return pos_logits, neg_logits
     
     def predict_all(self,seq):
-        seq_ids = seq
         seq = self.up_emb(self.embedding(seq))
-        log_feats = self.log2feats(seq, seq_ids=seq_ids)
+        log_feats = self.log2feats(seq)
         seq_output = self.down_emb(log_feats[:, -1, :]) # [b,dim,1]
         test_item_emb = self.embedding.weight
         logits = torch.matmul(seq_output, test_item_emb.transpose(0, 1))
-        return logits #[bs,item_size]
+        loss = self.loss(logits, pos.squeeze(-1))
+
+        return logits,loss #[bs,item_size]
 
     def forward(self, seq, pos):
     # ce loss 
-        seq_ids = seq
         seq = self.up_emb(self.embedding(seq))
-        log_feats = self.log2feats(seq, seq_ids=seq_ids)
+        log_feats = self.log2feats(seq)
         seq_output = self.down_emb(log_feats[:, -1, :]) # [b,dim]
         test_item_emb = self.embedding.weight
         logits = torch.matmul(seq_output, test_item_emb.transpose(0, 1))
@@ -235,16 +230,12 @@ class LLM4Rec(nn.Module):
         # Qwen2.5 does not define a dedicated pad token; use EOS token instead
         self.llama_tokenizer.pad_token = self.llama_tokenizer.eos_token
         self.llama_tokenizer.padding_side = "right"
-        instruct_ids, instruct_mask = self.llama_tokenizer(self.args['instruction_text'][0],
-                                                           truncation=True, padding=False,
-                                                           return_tensors='pt', add_special_tokens=False).values()
-        response_ids, response_mask = self.llama_tokenizer(self.args['instruction_text'][1],
-                                                           truncation=True, padding=False,
-                                                           return_tensors='pt', add_special_tokens=False).values()
-        self.register_buffer("instruct_ids", instruct_ids, persistent=False)
-        self.register_buffer("instruct_mask", instruct_mask, persistent=False)
-        self.register_buffer("response_ids", response_ids, persistent=False)
-        self.register_buffer("response_mask", response_mask, persistent=False)
+        self.instruct_ids, self.instruct_mask = self.llama_tokenizer(self.args['instruction_text'][0],
+                                                                     truncation=True, padding=False,
+                                                                     return_tensors='pt', add_special_tokens=False).values()
+        self.response_ids, self.response_mask = self.llama_tokenizer(self.args['instruction_text'][1],
+                                                                     truncation=True, padding=False,
+                                                                     return_tensors='pt', add_special_tokens=False).values()
         print('Language decoder initialized.')
 
         self.task_type = args['task_type']
@@ -258,13 +249,13 @@ class LLM4Rec(nn.Module):
     def predict(self, inputs, inputs_mask, output_hidden_states=False, output_logits=True):
         bs = inputs.shape[0]
         if self.args['train_stargy'] == "lora":
-            instruct_embeds = self.llama_model.model.embed_tokens(self.instruct_ids).expand(bs, -1, -1)
-            response_embeds = self.llama_model.model.embed_tokens(self.response_ids).expand(bs, -1, -1)
+            instruct_embeds = self.llama_model.model.embed_tokens(self.instruct_ids.cuda()).expand(bs, -1, -1)
+            response_embeds = self.llama_model.model.embed_tokens(self.response_ids.cuda()).expand(bs, -1, -1)
         else:
-            instruct_embeds = self.llama_model.embed_tokens(self.instruct_ids).expand(bs, -1, -1)
-            response_embeds = self.llama_model.embed_tokens(self.response_ids).expand(bs, -1, -1)
-        instruct_mask = self.instruct_mask.expand(bs, -1)
-        response_mask = self.response_mask.expand(bs, -1)
+            instruct_embeds = self.llama_model.embed_tokens(self.instruct_ids.cuda()).expand(bs, -1, -1)
+            response_embeds = self.llama_model.embed_tokens(self.response_ids.cuda()).expand(bs, -1, -1)
+        instruct_mask = self.instruct_mask.cuda().expand(bs, -1)
+        response_mask = self.response_mask.cuda().expand(bs, -1)
 
         if self.task_type == 'general':
             users = self.user_proj(self.user_embeds(inputs[:, 0].unsqueeze(1)))
@@ -292,14 +283,10 @@ class LLM4Rec(nn.Module):
 
     def multiple_predict(self, inputs, inputs_mask):
         bs = inputs.shape[0]
-        if self.args['train_stargy'] == "lora":
-            instruct_embeds = self.llama_model.model.embed_tokens(self.instruct_ids).expand(bs, -1, -1)
-            response_embeds = self.llama_model.model.embed_tokens(self.response_ids).expand(bs, -1, -1)
-        else:
-            instruct_embeds = self.llama_model.embed_tokens(self.instruct_ids).expand(bs, -1, -1)
-            response_embeds = self.llama_model.embed_tokens(self.response_ids).expand(bs, -1, -1)
-        instruct_mask = self.instruct_mask.expand(bs, -1)
-        response_mask = self.response_mask.expand(bs, -1)
+        instruct_embeds = self.llama_model.model.embed_tokens(self.instruct_ids.cuda()).expand(bs, -1, -1)
+        response_embeds = self.llama_model.model.embed_tokens(self.response_ids.cuda()).expand(bs, -1, -1)
+        instruct_mask = self.instruct_mask.cuda().expand(bs, -1)
+        response_mask = self.response_mask.cuda().expand(bs, -1)
 
         if self.task_type == 'general':
             users = self.user_proj(self.user_embeds(inputs[:, 0].unsqueeze(1)))
@@ -337,8 +324,8 @@ class LLM4Rec(nn.Module):
             pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
             neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
 
-            pos_label = torch.ones_like(pos_logits)
-            neg_label = torch.zeros_like(neg_logits)
+            pos_label = torch.ones_like(pos_logits).cuda()
+            neg_label = torch.zeros_like(neg_logits).cuda()
             loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
             loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
             loss = loss_real + loss_false
@@ -353,8 +340,8 @@ class LLM4Rec(nn.Module):
                 pos_logits = torch.matmul(log_feats, pos_embs)
                 neg_logits = torch.matmul(log_feats, neg_embs)
                 loss_tmp = None
-                pos_label = torch.ones_like(pos_logits)
-                neg_label = torch.zeros_like(neg_logits)
+                pos_label = torch.ones_like(pos_logits).cuda()
+                neg_label = torch.zeros_like(neg_logits).cuda()
                 loss_real = nn.BCEWithLogitsLoss(reduce=False)(pos_logits, pos_label)
                 loss_false = nn.BCEWithLogitsLoss(reduce=False)(neg_logits, neg_label)
                 loss_tmp = torch.mean(loss_real,-1) + torch.mean(loss_false,-1)
@@ -385,8 +372,8 @@ class LLM4RecTeacher(LLM4Rec):
             pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
             neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
 
-            pos_label = torch.ones_like(pos_logits)
-            neg_label = torch.zeros_like(neg_logits)
+            pos_label = torch.ones_like(pos_logits).cuda()
+            neg_label = torch.zeros_like(neg_logits).cuda()
             loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
             loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
             loss = loss_real + loss_false
@@ -401,8 +388,8 @@ class LLM4RecTeacher(LLM4Rec):
                 pos_logits = torch.matmul(log_feats, pos_embs)
                 neg_logits = torch.matmul(log_feats, neg_embs)
                 loss_tmp = None
-                pos_label = torch.ones_like(pos_logits)
-                neg_label = torch.zeros_like(neg_logits)
+                pos_label = torch.ones_like(pos_logits).cuda()
+                neg_label = torch.zeros_like(neg_logits).cuda()
                 loss_real = nn.BCEWithLogitsLoss(reduce=False)(pos_logits, pos_label)
                 loss_false = nn.BCEWithLogitsLoss(reduce=False)(neg_logits, neg_label)
                 loss_tmp = torch.mean(loss_real,-1) + torch.mean(loss_false,-1)
@@ -456,8 +443,8 @@ class LLM4RecStudent(LLM4Rec):
             pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
             neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
 
-            pos_label = torch.ones_like(pos_logits)
-            neg_label = torch.zeros_like(neg_logits)
+            pos_label = torch.ones_like(pos_logits).cuda()
+            neg_label = torch.zeros_like(neg_logits).cuda()
             loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
             loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
             loss = loss_real + loss_false
@@ -584,8 +571,8 @@ class LLM4RecDistill(nn.Module):
             pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
             neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
 
-            pos_label = torch.ones_like(pos_logits)
-            neg_label = torch.zeros_like(neg_logits)
+            pos_label = torch.ones_like(pos_logits).cuda()
+            neg_label = torch.zeros_like(neg_logits).cuda()
             loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
             loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
             loss = loss_real + loss_false

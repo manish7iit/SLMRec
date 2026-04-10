@@ -7,7 +7,6 @@ import fire
 import torch
 import pickle
 import numpy as np
-import json
 import transformers
 from transformers import LlamaForCausalLM, LlamaTokenizer
 from utils.prompter import Prompter
@@ -15,26 +14,6 @@ from model import LLM4Rec,LLM4RecDistill,LLM4RecTeacher,LLM4RecStudent
 from utils.data_utils import *
 from utils.eval_utils import RecallPrecision_atK, MRR_atK, MAP_atK, NDCG_atK, AUC, getLabel, compute_metrics
 from utils.train_utils import RecDistillationTrainer,DistillationTrainingArguments
-
-
-def _resolve_dataset_path(domain_type: str, data_path: str) -> str:
-    if data_path:
-        return data_path
-    return os.path.join("dataset", f"{domain_type}.csv")
-
-
-def _resolve_item_embed_path(domain_type: str) -> str:
-    candidates = [
-        os.path.join(f"sasrec_{domain_type}", "sasrec_item.pkl"),
-        os.path.join("model", f"sasrec_{domain_type}", "sasrec_item.pkl"),
-        os.path.join("model", "checkpoint", f"sasrec_{domain_type}", "sasrec_item.pkl"),
-    ]
-    for candidate in candidates:
-        if os.path.exists(candidate):
-            return candidate
-    raise FileNotFoundError(
-        f"Could not find SASRec item embeddings for domain '{domain_type}'. Checked: {candidates}"
-    )
 
 def train(
     # model/data params
@@ -164,18 +143,15 @@ def train(
     if len(wandb_log_model) > 0:
         os.environ["WANDB_LOG_MODEL"] = wandb_log_model
     # choose from music and music
-    dataset_path = _resolve_dataset_path(domain_type, data_path)
-    item_embed_path = _resolve_item_embed_path(domain_type)
-    with open(item_embed_path, "rb") as handle:
-        item_embed = pickle.load(handle)['item_embedding']
+    item_embed = pickle.load(open('./sasrec_{}/sasrec_item.pkl'.format(domain_type), 'rb'))['item_embedding']
     #if not ddp and torch.cuda.device_count() > 1:
         # keeps Trainer from trying its own DataParallelism when more than 1 gpu is available
         #model.is_parallelizable = True
         #model.model_parallel = True
     #args.include_inputs_for_metrics --> true
-    datasetTrain = LLMDataset(item_size=999, max_seq_length=30, data_type='train', csv_path=dataset_path)
-    datasetVal = LLMDataset(item_size=999, max_seq_length=30, data_type='valid', csv_path=dataset_path)
-    datasetTest = LLMDataset(item_size=999, max_seq_length=30, data_type='test', csv_path=dataset_path)
+    datasetTrain = LLMDataset(item_size=999, max_seq_length=30,data_type='train',csv_path="./dataset/music.csv".format(domain_type))
+    datasetVal = LLMDataset(item_size=999, max_seq_length=30,data_type='valid',csv_path="./dataset/music.csv".format(domain_type))
+    datasetTest = LLMDataset(item_size=999, max_seq_length=30,data_type='test',csv_path="./dataset/music.csv".format(domain_type))
     data_collator = SequentialCollator()
     if save_steps<0:
         save_strategy = "epoch"
@@ -522,7 +498,7 @@ def train(
                 args=DistillationTrainingArguments(
                     per_device_train_batch_size=micro_batch_size,
                     #include_inputs_for_metrics = True,
-                    gradient_accumulation_steps=batch_size // micro_batch_size,
+                    gradient_accumulation_steps=1, # change it
                     warmup_steps=warmup_steps,
                     num_train_epochs=num_epochs,
                     learning_rate=learning_rate,

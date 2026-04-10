@@ -7,7 +7,6 @@ import fire
 import torch
 import pickle
 import numpy as np
-import json
 import transformers
 from transformers import LlamaForCausalLM, LlamaTokenizer
 from utils.prompter import Prompter
@@ -16,26 +15,6 @@ from utils.data_utils import *
 from utils.eval_utils import RecallPrecision_atK, MRR_atK, MAP_atK, NDCG_atK, AUC, getLabel, compute_metrics
 from utils.train_utils import SLMTrainer
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
-
-def _resolve_dataset_path(domain_type: str, data_path: str) -> str:
-    if data_path:
-        return data_path
-    return os.path.join("dataset", f"{domain_type}.csv")
-
-
-def _resolve_item_embed_path(domain_type: str) -> str:
-    candidates = [
-        os.path.join(f"sasrec_{domain_type}", "sasrec_item.pkl"),
-        os.path.join("model", f"sasrec_{domain_type}", "sasrec_item.pkl"),
-        os.path.join("model", "checkpoint", f"sasrec_{domain_type}", "sasrec_item.pkl"),
-    ]
-    for candidate in candidates:
-        if os.path.exists(candidate):
-            return candidate
-    raise FileNotFoundError(
-        f"Could not find SASRec item embeddings for domain '{domain_type}'. Checked: {candidates}"
-    )
 
 def train(
     # model/data params
@@ -137,10 +116,7 @@ def train(
     if len(wandb_log_model) > 0:
         os.environ["WANDB_LOG_MODEL"] = wandb_log_model
     # choose from music and music
-    dataset_path = _resolve_dataset_path(domain_type, data_path)
-    item_embed_path = _resolve_item_embed_path(domain_type)
-    with open(item_embed_path, "rb") as handle:
-        item_embed = pickle.load(handle)['item_embedding']
+    item_embed = pickle.load(open('./sasrec_music/sasrec_item.pkl', 'rb'))['item_embedding']
             
     # Initialize model with float16 precision
     model = LLM4Rec(
@@ -169,9 +145,9 @@ def train(
         model.is_parallelizable = True
         model.model_parallel = True
     #args.include_inputs_for_metrics --> true
-    datasetTrain = LLMDataset(item_size=999, max_seq_length=30, data_type='train', csv_path=dataset_path)
-    datasetVal = LLMDataset(item_size=999, max_seq_length=30, data_type='valid', csv_path=dataset_path)
-    datasetTest = LLMDataset(item_size=999, max_seq_length=30, data_type='test', csv_path=dataset_path)
+    datasetTrain = LLMDataset(item_size=999, max_seq_length=30,data_type='train',csv_path="./dataset/music.csv".format(domain_type))
+    datasetVal = LLMDataset(item_size=999, max_seq_length=30,data_type='valid',csv_path="./dataset/music.csv".format(domain_type))
+    datasetTest = LLMDataset(item_size=999, max_seq_length=30,data_type='test',csv_path="./dataset/music.csv".format(domain_type))
     data_collator = SequentialCollator()
     if save_steps<0:
         save_strategy = "epoch"
@@ -190,7 +166,7 @@ def train(
         args=transformers.TrainingArguments(
             per_device_train_batch_size=micro_batch_size,
             #include_inputs_for_metrics = True,
-            gradient_accumulation_steps=gradient_accumulation_steps,
+            gradient_accumulation_steps=8, # change it
             warmup_steps=warmup_steps,
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
@@ -224,6 +200,69 @@ def train(
         compute_metrics = compute_metrics,
     )
     trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+    best_checkpoint_path = output_dir
+    model = LLM4Rec(
+        base_model=base_model,
+        task_type=task_type,
+        cache_dir=cache_dir,
+        input_dim=128,
+        output_dim=0,
+        interval_nums=interval_nums,
+        drop_type=drop_type,
+        lora_r=lora_r,
+        lora_alpha=lora_alpha,
+        lora_dropout=lora_dropout,
+        lora_target_modules=lora_target_modules,
+        device_map=device_map,
+        instruction_text=prompter.generate_prompt(task_type),
+        train_stargy = train_stargy,
+        user_embeds=None,
+        input_embeds=item_embed,
+        seq_len=30,
+        llama_decoder_nums=llama_decoder_nums,
+    )
+    model = model.to("cuda")
+    trainer = SLMTrainer(#transformers.Trainer(
+        model=model,
+        train_dataset=datasetTrain,
+        eval_dataset=datasetVal,
+        args=transformers.TrainingArguments(
+            per_device_train_batch_size=micro_batch_size,
+            #include_inputs_for_metrics = True,
+            gradient_accumulation_steps=8, # change it
+            warmup_steps=warmup_steps,
+            num_train_epochs=num_epochs,
+            learning_rate=learning_rate,
+            dataloader_num_workers=2,
+            per_device_eval_batch_size = 512,
+            remove_unused_columns = False,
+            max_steps=max_steps,
+            max_grad_norm=1.0,
+            fp16=True,
+            logging_steps=50,
+            optim="adamw_torch",
+            #metric_for_best_model="mrr",
+            # evaluation_strategy="steps", #if val_set_size > 0 else "no",
+            #eval_strategy=evaluation_strategy, # epoch
+            save_strategy="steps",
+            #eval_steps=eval_steps,
+            save_steps=max_steps,
+            lr_scheduler_type="cosine",
+            logging_dir = output_dir,
+            output_dir=output_dir,
+            save_total_limit=1,
+            #load_best_model_at_end=False,#True if val_set_size > 0 else False,
+            ddp_find_unused_parameters=False if ddp else None,
+            # use_reentrant=True,
+            group_by_length=group_by_length,
+            report_to="tensorboard",
+            # hub_strategy="checkpoint",
+            run_name=None,
+        ),
+        data_collator=data_collator,
+        compute_metrics = compute_metrics,
+    )
+    #trainer._load_from_checkpoint(best_checkpoint_path)
     pred_out = trainer.predict(test_dataset=datasetTest)
     output_data = {}
     if pred_out.metrics is not None:
