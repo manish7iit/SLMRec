@@ -18,7 +18,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 def train(
     # model/data params
-    base_model: str = "", 
+    base_model: str = "",
     data_path: str = "",
     cache_dir: str = "",
     output_dir: str = "/kaggle/working/output",
@@ -35,7 +35,7 @@ def train(
     drop_type: str="trune",
     lr_scheduler: str = "cosine",
     max_steps: int = 1000,
-    warmup_steps: int = 100, 
+    warmup_steps: int = 100,
     save_steps: int = 100000,
     eval_steps: int = 100,
     # lora hyperparams
@@ -55,7 +55,7 @@ def train(
     wandb_log_model: str = "",  # options: false | true
     resume_from_checkpoint: str = None,  # either training checkpoint or final adapter
     prompt_template_name: str = "alpaca",
-    llama_decoder_nums: int = 32, 
+    llama_decoder_nums: int = 32,
     domain_type: str = "music",
 ):
     if int(os.environ.get("LOCAL_RANK", 0)) == 0:
@@ -117,7 +117,7 @@ def train(
         os.environ["WANDB_LOG_MODEL"] = wandb_log_model
     # choose from music and music
     item_embed = pickle.load(open('./sasrec_music/sasrec_item.pkl', 'rb'))['item_embedding']
-            
+
     # Initialize model with float16 precision
     model = LLM4Rec(
         base_model=base_model,
@@ -157,7 +157,7 @@ def train(
         evaluation_strategy = "epoch"
     else:
         evaluation_strategy = "steps"
-        
+
     model = model.to("cuda")
     trainer = SLMTrainer(#transformers.Trainer(
         model=model,
@@ -188,7 +188,7 @@ def train(
             logging_dir = output_dir,
             output_dir=output_dir,
             save_total_limit=1,
-            evaluation_strategy="steps",
+            eval_strategy="steps",
             load_best_model_at_end=True,
             ddp_find_unused_parameters=False if ddp else None,
             # use_reentrant=True,
@@ -252,7 +252,7 @@ def train(
             logging_dir = output_dir,
             output_dir=output_dir,
             save_total_limit=1,
-            evaluation_strategy="steps",
+            eval_strategy="steps",
             load_best_model_at_end=True,
             ddp_find_unused_parameters=False if ddp else None,
             # use_reentrant=True,
@@ -276,5 +276,5 @@ def train(
         json.dump(output_data, file)
 
 if __name__ == "__main__":
-    torch.cuda.empty_cache() 
+    torch.cuda.empty_cache()
     fire.Fire(train)
