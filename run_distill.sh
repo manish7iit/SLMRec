@@ -1,8 +1,11 @@
 TEACHER_CHECKPOINT=$1
 OUTPUT_DIR=$2
+STUDENT_LAYERS=${3:-4}
+DISTILL_LAMBDA=${4:-0.5}
+SEED=${5:-42}
 
 if [ -z "$TEACHER_CHECKPOINT" ] || [ -z "$OUTPUT_DIR" ]; then
-  echo "Usage: $0 <teacher_checkpoint_path> <output_directory>"
+  echo "Usage: $0 <teacher_checkpoint_path> <output_directory> [student_layers] [distill_lambda] [seed]"
   exit 1
 fi
 
@@ -27,8 +30,9 @@ CUDA_VISIBLE_DEVICES=0 python distill.py \
     --warmup_steps 500 \
     --lr_scheduler cosine \
     --llama_decoder_nums_teacher 8 \
-    --llama_decoder_nums_student 4 \
+    --llama_decoder_nums_student "$STUDENT_LAYERS" \
     --teacher_resume_from_checkpoint "$TEACHER_CHECKPOINT" \
-    --distill_lambda 0.5 \
+    --distill_lambda "$DISTILL_LAMBDA" \
+    --seed "$SEED" \
     --save_steps 500 \
     --domain_type music

@@ -2,6 +2,7 @@ import os
 import sys
 from typing import List
 import argparse
+import json
 
 import fire
 import torch
@@ -14,6 +15,142 @@ from model import LLM4Rec,LLM4RecDistill,LLM4RecTeacher,LLM4RecStudent
 from utils.data_utils import *
 from utils.eval_utils import RecallPrecision_atK, MRR_atK, MAP_atK, NDCG_atK, AUC, getLabel, compute_metrics
 from utils.train_utils import RecDistillationTrainer,DistillationTrainingArguments
+
+def _parse_csv_values(value, cast=str):
+    if value is None or value == "":
+        return []
+    if isinstance(value, (list, tuple)):
+        return [cast(v) for v in value]
+    return [cast(v.strip()) for v in str(value).split(",") if v.strip()]
+
+
+def ensemble_predict(models, inputs):
+    """Average logits from multiple student models on the correct device."""
+    if len(models) == 0:
+        raise ValueError("ensemble_predict requires at least one model.")
+
+    logits_list = []
+    for model in models:
+        model.eval()
+        device = next(model.parameters()).device
+        model_inputs = {
+            key: value.to(device) if torch.is_tensor(value) else value
+            for key, value in inputs.items()
+        }
+        with torch.no_grad():
+            outputs = model(**model_inputs)
+        logits = outputs["logits"] if isinstance(outputs, dict) else outputs.logits
+        logits_list.append(logits)
+
+    return torch.stack(logits_list, dim=0).mean(dim=0)
+
+
+class EnsembleStudentModel(torch.nn.Module):
+    def __init__(self, models):
+        super().__init__()
+        self.models = torch.nn.ModuleList(models)
+
+    def forward(self, **inputs):
+        return {"logits": ensemble_predict(self.models, inputs)}
+
+
+def build_student_model(
+    distill_type_standard,
+    base_model,
+    task_type,
+    cache_dir,
+    interval_nums,
+    drop_type,
+    lora_r,
+    lora_alpha,
+    lora_dropout,
+    lora_target_modules,
+    device_map,
+    instruction_text,
+    train_stargy,
+    item_embed,
+    llama_decoder_nums_teacher,
+    llama_decoder_nums_student,
+    distill_lambda,
+    distill_block,
+    is_cls_multiple,
+    is_cls_multiple_teacher,
+    is_cls_multiple_student,
+):
+    if distill_type_standard == "offline":
+        return LLM4RecStudent(
+            base_model=base_model,
+            task_type=task_type,
+            cache_dir=cache_dir,
+            input_dim=128,
+            output_dim=0,
+            interval_nums=interval_nums,
+            drop_type=drop_type,
+            lora_r=lora_r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            lora_target_modules=lora_target_modules,
+            device_map=device_map,
+            instruction_text=instruction_text,
+            train_stargy=train_stargy,
+            user_embeds=None,
+            input_embeds=item_embed,
+            seq_len=30,
+            llama_decoder_nums=llama_decoder_nums_student,
+            distill_block=distill_block,
+            is_cls_multiple=is_cls_multiple,
+        )
+
+    if distill_type_standard == "online":
+        return LLM4RecDistill(
+            base_model=base_model,
+            task_type=task_type,
+            cache_dir=cache_dir,
+            input_dim=128,
+            output_dim=0,
+            interval_nums=interval_nums,
+            drop_type=drop_type,
+            lora_r=lora_r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            lora_target_modules=lora_target_modules,
+            device_map=device_map,
+            instruction_text=instruction_text,
+            train_stargy=train_stargy,
+            user_embeds=None,
+            item_embed=item_embed,
+            seq_len=30,
+            llama_decoder_nums=llama_decoder_nums_teacher,
+            llama_decoder_nums_teacher=llama_decoder_nums_teacher,
+            llama_decoder_nums_student=llama_decoder_nums_student,
+            distill_lambda=distill_lambda,
+            distill_block=distill_block,
+            is_cls_multiple_teacher=is_cls_multiple_teacher,
+            is_cls_multiple_student=is_cls_multiple_student,
+        )
+
+    raise ValueError(f"Unsupported distill_type_standard: {distill_type_standard}")
+
+
+def load_ensemble_students(
+    trainer,
+    checkpoint_paths,
+    student_layers,
+    build_model_fn,
+):
+    if len(checkpoint_paths) == 0:
+        raise ValueError("--use_ensemble requires --ensemble_student_checkpoints.")
+    if len(student_layers) not in {0, len(checkpoint_paths)}:
+        raise ValueError("--ensemble_student_layers must be empty or match the checkpoint count.")
+
+    models = []
+    for idx, checkpoint_path in enumerate(checkpoint_paths):
+        layer_count = student_layers[idx] if student_layers else None
+        model = build_model_fn(layer_count).to("cuda")
+        trainer._load_from_checkpoint(checkpoint_path, model=model)
+        model.eval()
+        models.append(model)
+    return models
 
 def train(
     # model/data params
@@ -70,6 +207,10 @@ def train(
     is_cls_multiple_student: bool = False,
     cls_multiple_lambda_teacher: float = 1.0,
     cls_multiple_lambda_student: float = 1.0,
+    seed: int = 42,
+    use_ensemble: bool = False,
+    ensemble_student_checkpoints: str = "",
+    ensemble_student_layers: str = "",
 
 ):
     if int(os.environ.get("LOCAL_RANK", 0)) == 0:
@@ -115,6 +256,10 @@ def train(
             f"is_cls_multiple_student:{is_cls_multiple_student}\n"
             f"cls_multiple_lambda_teacher:{cls_multiple_lambda_teacher}\n"
             f"cls_multiple_lambda_student:{cls_multiple_lambda_student}\n"
+            f"seed:{seed}\n"
+            f"use_ensemble:{use_ensemble}\n"
+            f"ensemble_student_checkpoints:{ensemble_student_checkpoints}\n"
+            f"ensemble_student_layers:{ensemble_student_layers}\n"
         )
     # assert (
     #     base_model
@@ -122,6 +267,7 @@ def train(
     gradient_accumulation_steps = batch_size // micro_batch_size
 
     prompter = Prompter(prompt_template_name)
+    transformers.set_seed(seed)
 
     device_map = None
     world_size = int(os.environ.get("WORLD_SIZE", 1))
@@ -242,6 +388,7 @@ def train(
                 lr_scheduler_type="cosine",
                 logging_dir = output_dir,
                 output_dir=output_dir,
+                seed=seed,
                 save_total_limit=2,
                 load_best_model_at_end=False,#True if val_set_size > 0 else False,
                 ddp_find_unused_parameters=False if ddp else None,
@@ -323,6 +470,7 @@ def train(
                 lr_scheduler_type="cosine",
                 logging_dir = output_dir,
                 output_dir=output_dir,
+                seed=seed,
                 save_total_limit=2,
                 load_best_model_at_end=False,#True if val_set_size > 0 else False,
                 ddp_find_unused_parameters=False if ddp else None,
@@ -356,7 +504,7 @@ def train(
         # trainer.evaluate(eval_dataset=datasetVal)
         best_checkpoint_path = output_dir
         # trainer._load_from_checkpoint(trainer.state.best_model_checkpoint)
-    elif train_eval_type=="eval":
+    elif train_eval_type=="eval" and not use_ensemble:
         trainer._load_from_checkpoint(student_resume_from_checkpoint)
     
     if train_eval_type=="train":
@@ -439,6 +587,7 @@ def train(
                     lr_scheduler_type="cosine",
                     logging_dir = output_dir,
                     output_dir=output_dir,
+                    seed=seed,
                     save_total_limit=2,
                     load_best_model_at_end=False,#True if val_set_size > 0 else False,
                     ddp_find_unused_parameters=False if ddp else None,
@@ -519,6 +668,7 @@ def train(
                     lr_scheduler_type="cosine",
                     logging_dir = output_dir,
                     output_dir=output_dir,
+                    seed=seed,
                     save_total_limit=2,
                     load_best_model_at_end=False,#True if val_set_size > 0 else False,
                     ddp_find_unused_parameters=False if ddp else None,
@@ -546,6 +696,45 @@ def train(
                 compute_metrics = compute_metrics,
             )
         #trainer._load_from_checkpoint(best_checkpoint_path)    
+    if use_ensemble:
+        checkpoint_paths = _parse_csv_values(ensemble_student_checkpoints)
+        student_layers = _parse_csv_values(ensemble_student_layers, int)
+
+        def _build_ensemble_model(layer_count):
+            return build_student_model(
+                distill_type_standard=distill_type_standard,
+                base_model=base_model,
+                task_type=task_type,
+                cache_dir=cache_dir,
+                interval_nums=interval_nums,
+                drop_type=drop_type,
+                lora_r=lora_r,
+                lora_alpha=lora_alpha,
+                lora_dropout=lora_dropout,
+                lora_target_modules=lora_target_modules,
+                device_map=device_map,
+                instruction_text=prompter.generate_prompt(task_type),
+                train_stargy=train_stargy,
+                item_embed=item_embed,
+                llama_decoder_nums_teacher=llama_decoder_nums_teacher,
+                llama_decoder_nums_student=layer_count or llama_decoder_nums_student,
+                distill_lambda=distill_lambda,
+                distill_block=distill_block,
+                is_cls_multiple=is_cls_multiple,
+                is_cls_multiple_teacher=is_cls_multiple_teacher,
+                is_cls_multiple_student=is_cls_multiple_student,
+            )
+
+        ensemble_models = load_ensemble_students(
+            trainer=trainer,
+            checkpoint_paths=checkpoint_paths,
+            student_layers=student_layers,
+            build_model_fn=_build_ensemble_model,
+        )
+        trainer.model = EnsembleStudentModel(ensemble_models).to("cuda")
+        trainer.model_wrapped = trainer.model
+        trainer.label_names = []
+
     pred_out = trainer.predict(test_dataset=datasetTest)
     output_data = {}
     if pred_out.metrics is not None:
