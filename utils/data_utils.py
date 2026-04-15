@@ -446,7 +446,7 @@ class SequentialCollator:
 
         return {
             "input_ids":user_id,
-            "labels":user_id,
+            "labels": answers.squeeze(-1),
             "inputs": inputs,
             "inputs_mask": inputs_mask,
             "answers": answers,

@@ -3,18 +3,21 @@ OUTPUT_DIR=$2
 STUDENT_LAYERS=${3:-4}
 DISTILL_LAMBDA=${4:-0.5}
 SEED=${5:-42}
+BASE_MODEL=${6:-Qwen/Qwen2.5-3B}
 
 if [ -z "$TEACHER_CHECKPOINT" ] || [ -z "$OUTPUT_DIR" ]; then
-  echo "Usage: $0 <teacher_checkpoint_path> <output_directory> [student_layers] [distill_lambda] [seed]"
+  echo "Usage: $0 <teacher_checkpoint_path> <output_directory> [student_layers] [distill_lambda] [seed] [base_model]"
   exit 1
 fi
 
 CUDA_VISIBLE_DEVICES=0 python distill.py \
     --task_type sequential \
+    --base_model "$BASE_MODEL" \
     --cache_dir cache_dir/ \
     --output_dir "$OUTPUT_DIR" \
     --batch_size 32 \
     --micro_batch_size 2 \
+    --eval_batch_size 16 \
     --num_epochs 3 \
     --max_steps 1000 \
     --learning_rate 5e-5 \

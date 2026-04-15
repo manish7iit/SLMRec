@@ -6,15 +6,27 @@ import json
 
 import fire
 import torch
+import torch.nn.functional as F
 import pickle
 import numpy as np
 import transformers
 from transformers import LlamaForCausalLM, LlamaTokenizer
+from transformers.trainer_utils import EvalPrediction, PredictionOutput
 from utils.prompter import Prompter
 from model import LLM4Rec,LLM4RecDistill,LLM4RecTeacher,LLM4RecStudent
 from utils.data_utils import *
 from utils.eval_utils import RecallPrecision_atK, MRR_atK, MAP_atK, NDCG_atK, AUC, getLabel, compute_metrics
 from utils.train_utils import RecDistillationTrainer,DistillationTrainingArguments
+
+DEFAULT_OPEN_BASE_MODEL = "Qwen/Qwen2.5-3B"
+OPEN_BASE_MODEL_ALLOWLIST = {
+    "Qwen/Qwen2.5-3B",
+    "Qwen/Qwen1.5-4B",
+    "microsoft/phi-2",
+    "stabilityai/stablelm-3b-4e1t",
+}
+BLOCKED_BASE_MODEL_PATTERNS = ("llama", "gemma")
+
 
 def _parse_csv_values(value, cast=str):
     if value is None or value == "":
@@ -22,6 +34,19 @@ def _parse_csv_values(value, cast=str):
     if isinstance(value, (list, tuple)):
         return [cast(v) for v in value]
     return [cast(v.strip()) for v in str(value).split(",") if v.strip()]
+
+
+def _validate_open_base_model(base_model):
+    base_model = base_model or DEFAULT_OPEN_BASE_MODEL
+    lowered = base_model.lower()
+    if any(pattern in lowered for pattern in BLOCKED_BASE_MODEL_PATTERNS):
+        raise ValueError(f"{base_model} is blocked. Use only fully open, non-gated models.")
+    if base_model not in OPEN_BASE_MODEL_ALLOWLIST:
+        raise ValueError(
+            f"{base_model} is not in the open-model allowlist. "
+            f"Allowed values: {', '.join(sorted(OPEN_BASE_MODEL_ALLOWLIST))}"
+        )
+    return base_model
 
 
 def ensemble_predict(models, inputs):
@@ -40,6 +65,9 @@ def ensemble_predict(models, inputs):
         with torch.no_grad():
             outputs = model(**model_inputs)
         logits = outputs["logits"] if isinstance(outputs, dict) else outputs.logits
+        if len(logits_list) > 0 and logits.shape != logits_list[0].shape:
+            raise ValueError(f"Ensemble logits shape mismatch: {logits.shape} != {logits_list[0].shape}")
+        logits = F.normalize(logits, dim=-1)
         logits_list.append(logits)
 
     return torch.stack(logits_list, dim=0).mean(dim=0)
@@ -48,6 +76,7 @@ def ensemble_predict(models, inputs):
 class EnsembleStudentModel(torch.nn.Module):
     def __init__(self, models):
         super().__init__()
+        self._keys_to_ignore_on_save = []
         self.models = torch.nn.ModuleList(models)
 
     def forward(self, **inputs):
@@ -136,21 +165,116 @@ def load_ensemble_students(
     trainer,
     checkpoint_paths,
     student_layers,
+    base_models,
     build_model_fn,
 ):
     if len(checkpoint_paths) == 0:
         raise ValueError("--use_ensemble requires --ensemble_student_checkpoints.")
     if len(student_layers) not in {0, len(checkpoint_paths)}:
         raise ValueError("--ensemble_student_layers must be empty or match the checkpoint count.")
+    if len(base_models) not in {0, len(checkpoint_paths)}:
+        raise ValueError("--ensemble_base_models must be empty or match the checkpoint count.")
 
     models = []
     for idx, checkpoint_path in enumerate(checkpoint_paths):
         layer_count = student_layers[idx] if student_layers else None
-        model = build_model_fn(layer_count).to("cuda")
+        base_model = base_models[idx] if base_models else None
+        model = build_model_fn(layer_count, base_model).to("cuda")
         trainer._load_from_checkpoint(checkpoint_path, model=model)
         model.eval()
         models.append(model)
     return models
+
+
+def load_checkpoint_if_available(trainer, checkpoint_path, model=None, required=False, name="checkpoint"):
+    if checkpoint_path is None or checkpoint_path == "":
+        if required:
+            raise ValueError(f"{name} is required but was not provided.")
+        return
+    trainer._load_from_checkpoint(checkpoint_path, model=model)
+
+
+def _json_safe_metrics(metrics):
+    safe_metrics = {}
+    for key, value in metrics.items():
+        if isinstance(value, np.generic):
+            value = value.item()
+        elif isinstance(value, np.ndarray):
+            value = value.tolist()
+        safe_metrics[key] = value
+    return safe_metrics
+
+
+def print_and_save_metrics(pred_out, output_dir, use_ensemble=False):
+    metrics = pred_out.metrics or {}
+    metrics = _json_safe_metrics(metrics)
+    title = "Final ensemble test metrics" if use_ensemble else "Test metrics"
+
+    print(f"\n{title}:")
+    if len(metrics) == 0:
+        print("No metrics were returned.")
+    else:
+        for metric_name, metric_value in metrics.items():
+            print(f"{metric_name}: {metric_value}")
+
+    os.makedirs(output_dir, exist_ok=True)
+    metrics_file = "ensemble_metrics.json" if use_ensemble else "metrics.json"
+    with open(os.path.join(output_dir, metrics_file), "w") as file:
+        json.dump(metrics, file, indent=2)
+    with open(os.path.join(output_dir, "log.txt"), "a") as file:
+        json.dump({"type": title, "metrics": metrics}, file)
+        file.write("\n")
+
+
+def run_sequential_ensemble_predict(
+    trainer,
+    test_dataset,
+    checkpoint_paths,
+    student_layers,
+    base_models,
+    build_model_fn,
+):
+    """Run one ensemble member at a time to reduce peak GPU memory."""
+    prediction_sum = None
+    label_ids = None
+
+    for idx, checkpoint_path in enumerate(checkpoint_paths):
+        layer_count = student_layers[idx] if student_layers else None
+        base_model = base_models[idx] if base_models else None
+        model = build_model_fn(layer_count, base_model).to("cuda")
+        load_checkpoint_if_available(
+            trainer,
+            checkpoint_path,
+            model=model,
+            required=True,
+            name=f"ensemble_student_checkpoints[{idx}]",
+        )
+        model.eval()
+
+        trainer.model = model
+        trainer.model_wrapped = model
+        trainer.label_names = ["labels"]
+        pred_out = trainer.predict(test_dataset=test_dataset)
+
+        logits = pred_out.predictions
+        norm = np.linalg.norm(logits, axis=-1, keepdims=True)
+        logits = logits / np.maximum(norm, 1e-12)
+
+        if prediction_sum is None:
+            prediction_sum = logits
+            label_ids = pred_out.label_ids
+        else:
+            if logits.shape != prediction_sum.shape:
+                raise ValueError(f"Ensemble logits shape mismatch: {logits.shape} != {prediction_sum.shape}")
+            prediction_sum += logits
+
+        del model
+        torch.cuda.empty_cache()
+
+    predictions = prediction_sum / len(checkpoint_paths)
+    metrics = trainer.compute_metrics(EvalPrediction(predictions=predictions, label_ids=label_ids))
+    metrics = {f"test_{key}": value for key, value in metrics.items()}
+    return PredictionOutput(predictions=predictions, label_ids=label_ids, metrics=metrics)
 
 def train(
     # model/data params
@@ -163,6 +287,7 @@ def train(
     # training hyperparams
     batch_size: int = 128,
     micro_batch_size: int = 8,
+    eval_batch_size: int = 16,
     num_epochs: int = 3,
     learning_rate: float =  1e-4,
     cutoff_len: int = 4096,
@@ -208,11 +333,15 @@ def train(
     cls_multiple_lambda_teacher: float = 1.0,
     cls_multiple_lambda_student: float = 1.0,
     seed: int = 42,
+    distill_temperature: float = 2.0,
     use_ensemble: bool = False,
+    ensemble_sequential: bool = True,
     ensemble_student_checkpoints: str = "",
     ensemble_student_layers: str = "",
+    ensemble_base_models: str = "",
 
 ):
+    base_model = _validate_open_base_model(base_model)
     if int(os.environ.get("LOCAL_RANK", 0)) == 0:
         print(
             f"Params using prompt template {prompt_template_name}:\n"
@@ -223,6 +352,7 @@ def train(
             f"task_type: {task_type}\n"
             f"batch_size: {batch_size}\n"
             f"micro_batch_size: {micro_batch_size}\n"
+            f"eval_batch_size: {eval_batch_size}\n"
             f"num_epochs: {num_epochs}\n"
             f"learning_rate: {learning_rate}\n"
             f"cutoff_len: {cutoff_len}\n"
@@ -257,9 +387,12 @@ def train(
             f"cls_multiple_lambda_teacher:{cls_multiple_lambda_teacher}\n"
             f"cls_multiple_lambda_student:{cls_multiple_lambda_student}\n"
             f"seed:{seed}\n"
+            f"distill_temperature:{distill_temperature}\n"
             f"use_ensemble:{use_ensemble}\n"
+            f"ensemble_sequential:{ensemble_sequential}\n"
             f"ensemble_student_checkpoints:{ensemble_student_checkpoints}\n"
             f"ensemble_student_layers:{ensemble_student_layers}\n"
+            f"ensemble_base_models:{ensemble_base_models}\n"
         )
     # assert (
     #     base_model
@@ -372,7 +505,7 @@ def train(
                 num_train_epochs=num_epochs,
                 learning_rate=learning_rate,
                 dataloader_num_workers=2,
-                per_device_eval_batch_size = 128,
+                per_device_eval_batch_size = eval_batch_size,
                 remove_unused_columns = False,
                 max_grad_norm=1.0,
                 fp16=True,
@@ -403,6 +536,7 @@ def train(
                 distill_block=distill_block,
                 distill_type=distill_type,
                 distill_type_standard=distill_type_standard,
+                distill_temperature=distill_temperature,
                 is_cls_multiple=is_cls_multiple,
                 cls_multiple_lambda=cls_multiple_lambda,
                 kd_loss_type=kd_loss_type,
@@ -411,7 +545,7 @@ def train(
             data_collator=data_collator,
             compute_metrics = compute_metrics,
         )
-        trainer._load_from_checkpoint(teacher_resume_from_checkpoint,model=model_teacher)
+        load_checkpoint_if_available(trainer, teacher_resume_from_checkpoint, model=model_teacher, required=True, name="teacher_resume_from_checkpoint")
         model_teacher.eval()
     elif distill_type_standard=="online":
         model = LLM4RecDistill(
@@ -454,7 +588,7 @@ def train(
                 num_train_epochs=num_epochs,
                 learning_rate=learning_rate,
                 dataloader_num_workers=2,
-                per_device_eval_batch_size = 128,
+                per_device_eval_batch_size = eval_batch_size,
                 remove_unused_columns = False,
                 max_grad_norm=1.0,
                 fp16=True,
@@ -485,6 +619,7 @@ def train(
                 distill_block=distill_block,
                 distill_type=distill_type,
                 distill_type_standard=distill_type_standard,
+                distill_temperature=distill_temperature,
                 is_cls_multiple=is_cls_multiple,
                 is_cls_multiple_teacher=is_cls_multiple_teacher,
                 is_cls_multiple_student=is_cls_multiple_student,
@@ -505,7 +640,7 @@ def train(
         best_checkpoint_path = output_dir
         # trainer._load_from_checkpoint(trainer.state.best_model_checkpoint)
     elif train_eval_type=="eval" and not use_ensemble:
-        trainer._load_from_checkpoint(student_resume_from_checkpoint)
+        load_checkpoint_if_available(trainer, student_resume_from_checkpoint, required=True, name="student_resume_from_checkpoint")
     
     if train_eval_type=="train":
         # reload the model and path
@@ -571,7 +706,7 @@ def train(
                     num_train_epochs=num_epochs,
                     learning_rate=learning_rate,
                     dataloader_num_workers=2,
-                    per_device_eval_batch_size = 128,
+                    per_device_eval_batch_size = eval_batch_size,
                     remove_unused_columns = False,
                     max_grad_norm=1.0,
                     fp16=True,
@@ -602,6 +737,7 @@ def train(
                     distill_block=distill_block,
                     distill_type=distill_type,
                     distill_type_standard=distill_type_standard,
+                    distill_temperature=distill_temperature,
                     is_cls_multiple=is_cls_multiple,
                     cls_multiple_lambda=cls_multiple_lambda,
                     kd_loss_type=kd_loss_type,
@@ -610,7 +746,7 @@ def train(
                 data_collator=data_collator,
                 compute_metrics = compute_metrics,
             )
-            trainer._load_from_checkpoint(teacher_resume_from_checkpoint,model=model_teacher)
+            load_checkpoint_if_available(trainer, teacher_resume_from_checkpoint, model=model_teacher, required=True, name="teacher_resume_from_checkpoint")
             model_teacher.eval()
         elif distill_type_standard=="online":
             model = LLM4RecDistill(
@@ -652,7 +788,7 @@ def train(
                     num_train_epochs=num_epochs,
                     learning_rate=learning_rate,
                     dataloader_num_workers=2,
-                    per_device_eval_batch_size = 128,
+                    per_device_eval_batch_size = eval_batch_size,
                     remove_unused_columns = False,
                     max_grad_norm=1.0,
                     fp16=True,
@@ -683,6 +819,7 @@ def train(
                     distill_block=distill_block,
                     distill_type=distill_type,
                     distill_type_standard=distill_type_standard,
+                    distill_temperature=distill_temperature,
                     is_cls_multiple=is_cls_multiple,
                     is_cls_multiple_teacher=is_cls_multiple_teacher,
                     is_cls_multiple_student=is_cls_multiple_student,
@@ -699,11 +836,15 @@ def train(
     if use_ensemble:
         checkpoint_paths = _parse_csv_values(ensemble_student_checkpoints)
         student_layers = _parse_csv_values(ensemble_student_layers, int)
+        ensemble_base_model_list = [
+            _validate_open_base_model(model_name)
+            for model_name in _parse_csv_values(ensemble_base_models)
+        ]
 
-        def _build_ensemble_model(layer_count):
+        def _build_ensemble_model(layer_count, model_name):
             return build_student_model(
                 distill_type_standard=distill_type_standard,
-                base_model=base_model,
+                base_model=model_name or base_model,
                 task_type=task_type,
                 cache_dir=cache_dir,
                 interval_nums=interval_nums,
@@ -725,25 +866,30 @@ def train(
                 is_cls_multiple_student=is_cls_multiple_student,
             )
 
-        ensemble_models = load_ensemble_students(
-            trainer=trainer,
-            checkpoint_paths=checkpoint_paths,
-            student_layers=student_layers,
-            build_model_fn=_build_ensemble_model,
-        )
-        trainer.model = EnsembleStudentModel(ensemble_models).to("cuda")
-        trainer.model_wrapped = trainer.model
-        trainer.label_names = []
-
-    pred_out = trainer.predict(test_dataset=datasetTest)
-    output_data = {}
-    if pred_out.metrics is not None:
-        for metric_name, metric_value in pred_out.metrics.items():
-            print(f"{metric_name}: {metric_value}")
-
-    # Write the output data to a file
-    with open(os.path.join(output_dir,"log.txt"), 'a') as file:
-        json.dump(output_data, file)
+        if ensemble_sequential:
+            pred_out = run_sequential_ensemble_predict(
+                trainer=trainer,
+                test_dataset=datasetTest,
+                checkpoint_paths=checkpoint_paths,
+                student_layers=student_layers,
+                base_models=ensemble_base_model_list,
+                build_model_fn=_build_ensemble_model,
+            )
+        else:
+            ensemble_models = load_ensemble_students(
+                trainer=trainer,
+                checkpoint_paths=checkpoint_paths,
+                student_layers=student_layers,
+                base_models=ensemble_base_model_list,
+                build_model_fn=_build_ensemble_model,
+            )
+            trainer.model = EnsembleStudentModel(ensemble_models).to("cuda")
+            trainer.model_wrapped = trainer.model
+            trainer.label_names = ["labels"]
+            pred_out = trainer.predict(test_dataset=datasetTest)
+    else:
+        pred_out = trainer.predict(test_dataset=datasetTest)
+    print_and_save_metrics(pred_out, output_dir, use_ensemble=use_ensemble)
 
 if __name__ == "__main__":
     torch.cuda.empty_cache() 

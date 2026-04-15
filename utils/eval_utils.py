@@ -127,6 +127,15 @@ def compute_metrics(pred):
     # print("logits shape:{}".format(logits.shape))
     if np.any(np.isnan(logits)) or np.any(np.isinf(logits)):
         HIT_1, NDCG_1, HIT_5, NDCG_5, HIT_10, NDCG_10, MRR = -1, -1, -1, -1, -1, -1, -1
+    elif pred.label_ids is not None and logits.ndim == 2:
+        labels = np.asarray(pred.label_ids).reshape(-1)
+        logits = logits.copy()
+        logits[:, 0] = -np.inf
+        ranks = (-logits).argsort(axis=1)
+        answer_ranks = np.array([np.where(ranks[i] == labels[i])[0][0] for i in range(len(labels))])
+        HIT_1, NDCG_1, MRR = get_metric(answer_ranks, 1)
+        HIT_5, NDCG_5, MRR = get_metric(answer_ranks, 5)
+        HIT_10, NDCG_10, MRR = get_metric(answer_ranks, 10)
     else:
         HIT_1, NDCG_1, HIT_5, NDCG_5, HIT_10, NDCG_10, MRR = get_sample_scores(logits)
     return {

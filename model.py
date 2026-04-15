@@ -12,6 +12,8 @@ from peft import (
 import math
 import os
 
+DEFAULT_OPEN_BASE_MODEL = "Qwen/Qwen2.5-3B"
+
 class PointWiseFeedForward(torch.nn.Module):
     def __init__(self, hidden_units, dropout_rate):
 
@@ -187,10 +189,12 @@ class SASRec(nn.Module):
 class LLM4Rec(nn.Module):
     def __init__(self, **args):
         super(LLM4Rec, self).__init__()
+        self._keys_to_ignore_on_save = []
         self.args = args
         self.input_dim, self.output_dim = args['input_dim'], args['output_dim']
+        self.base_model = self.args.get('base_model') or DEFAULT_OPEN_BASE_MODEL
 
-        print(f'Initializing language decoder ...')
+        print(f'Initializing language decoder from {self.base_model} ...')
         # add the lora module
         peft_config = LoraConfig(
             task_type='FEATURE_EXTRACTION',
@@ -201,22 +205,27 @@ class LLM4Rec(nn.Module):
             bias='none',
         )
 
-        # Qwen2.5-3B (3B params, ~2x smaller than Mistral-7B)
         self.llama_model = AutoModel.from_pretrained(
-            "Qwen/Qwen2.5-3B",
+            self.base_model,
             torch_dtype=torch.float16,
             cache_dir=args['cache_dir'],
             device_map=self.args['device_map']
         )
         if self.args['drop_type'] == "trune":
-            self.llama_model.layers = nn.ModuleList(self.llama_model.layers[:self.args['llama_decoder_nums']])
+            decoder_layers = self._get_decoder_layers(self.llama_model)
+            self._set_decoder_layers(
+                self.llama_model,
+                nn.ModuleList(decoder_layers[:self.args['llama_decoder_nums']])
+            )
         elif self.args['drop_type'] == "interval":
             # Interval for layer dropping
             interval_nums = self.args['interval_nums']
 
             # Keep layers with interval-based dropping
-            self.llama_model.layers = nn.ModuleList([layer for i, layer in enumerate(self.llama_model.layers) if (i + 1) % (interval_nums + 1) != 0])
-            num_layers = len(self.llama_model.layers)
+            decoder_layers = self._get_decoder_layers(self.llama_model)
+            kept_layers = nn.ModuleList([layer for i, layer in enumerate(decoder_layers) if (i + 1) % (interval_nums + 1) != 0])
+            self._set_decoder_layers(self.llama_model, kept_layers)
+            num_layers = len(kept_layers)
             print(f'Number of layers in the model: {num_layers}')
 
         # Remove prepare_model_for_int8_training call
@@ -225,10 +234,9 @@ class LLM4Rec(nn.Module):
             self.llama_model.print_trainable_parameters()
         self.llama_model.config.use_cache = False
         # self.llama_model.config.num_hidden_layers = 10
-        self.llama_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B", use_fast=True, cache_dir=args['cache_dir'])
-        # self.llama_tokenizer = AutoTokenizer.from_pretrained(self.args['base_model'], use_fast=True, local_files_only=True, cache_dir=args['cache_dir'])
-        # Qwen2.5 does not define a dedicated pad token; use EOS token instead
-        self.llama_tokenizer.pad_token = self.llama_tokenizer.eos_token
+        self.llama_tokenizer = AutoTokenizer.from_pretrained(self.base_model, use_fast=True, cache_dir=args['cache_dir'])
+        if self.llama_tokenizer.pad_token is None:
+            self.llama_tokenizer.pad_token = self.llama_tokenizer.eos_token
         self.llama_tokenizer.padding_side = "right"
         self.instruct_ids, self.instruct_mask = self.llama_tokenizer(self.args['instruction_text'][0],
                                                                      truncation=True, padding=False,
@@ -245,15 +253,45 @@ class LLM4Rec(nn.Module):
         # self.score_up = nn.Linear(self.input_dim, self.llama_model.config.hidden_size, bias=False)
         self.loss = torch.nn.CrossEntropyLoss()
 
+    def _get_nested_attr(self, obj, path):
+        for name in path.split("."):
+            obj = getattr(obj, name)
+        return obj
+
+    def _set_nested_attr(self, obj, path, value):
+        names = path.split(".")
+        for name in names[:-1]:
+            obj = getattr(obj, name)
+        setattr(obj, names[-1], value)
+
+    def _get_decoder_layers(self, model):
+        for path in ("layers", "model.layers", "decoder.layers", "gpt_neox.layers", "transformer.h"):
+            try:
+                layers = self._get_nested_attr(model, path)
+                self._decoder_layers_path = path
+                return layers
+            except AttributeError:
+                continue
+        raise AttributeError(f"Could not find decoder layers for {self.base_model}.")
+
+    def _set_decoder_layers(self, model, layers):
+        self._set_nested_attr(model, self._decoder_layers_path, layers)
+
+    def _embed_tokens(self, token_ids):
+        if hasattr(self.llama_model, "get_input_embeddings"):
+            embeddings = self.llama_model.get_input_embeddings()
+            if embeddings is not None:
+                return embeddings(token_ids)
+        if hasattr(self.llama_model, "model") and hasattr(self.llama_model.model, "get_input_embeddings"):
+            embeddings = self.llama_model.model.get_input_embeddings()
+            if embeddings is not None:
+                return embeddings(token_ids)
+        raise AttributeError(f"Could not find token embeddings for {self.base_model}.")
 
     def predict(self, inputs, inputs_mask, output_hidden_states=False, output_logits=True):
         bs = inputs.shape[0]
-        if self.args['train_stargy'] == "lora":
-            instruct_embeds = self.llama_model.model.embed_tokens(self.instruct_ids.cuda()).expand(bs, -1, -1)
-            response_embeds = self.llama_model.model.embed_tokens(self.response_ids.cuda()).expand(bs, -1, -1)
-        else:
-            instruct_embeds = self.llama_model.embed_tokens(self.instruct_ids.cuda()).expand(bs, -1, -1)
-            response_embeds = self.llama_model.embed_tokens(self.response_ids.cuda()).expand(bs, -1, -1)
+        instruct_embeds = self._embed_tokens(self.instruct_ids.cuda()).expand(bs, -1, -1)
+        response_embeds = self._embed_tokens(self.response_ids.cuda()).expand(bs, -1, -1)
         instruct_mask = self.instruct_mask.cuda().expand(bs, -1)
         response_mask = self.response_mask.cuda().expand(bs, -1)
 
@@ -271,7 +309,7 @@ class LLM4Rec(nn.Module):
         outputs = self.llama_model(inputs_embeds=inputs, attention_mask=attention_mask, return_dict=True, output_hidden_states=output_hidden_states)
         # print("outputs len:{}".format(len(outputs.hidden_states))) # 33
         if output_logits:
-            pooled_output = outputs.last_hidden_state[:, -1]#outputs.hidden_states[-10][:, -1]#outputs.last_hidden_state[:, -1]
+            pooled_output = self._mean_pool(outputs.last_hidden_state, attention_mask)
             pooled_logits = self.score(pooled_output)
         if not output_hidden_states:
             return pooled_logits
@@ -281,10 +319,19 @@ class LLM4Rec(nn.Module):
             else:
                 return outputs.hidden_states
 
+    def _mean_pool(self, hidden_states, attention_mask):
+        mask = attention_mask.to(hidden_states.device).unsqueeze(-1).type_as(hidden_states)
+        return (hidden_states * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
+
+    def _all_item_logits(self, pooled_logits):
+        pooled_logits = F.normalize(pooled_logits, dim=-1)
+        item_emb = F.normalize(self.input_embeds.weight, dim=-1)
+        return torch.matmul(pooled_logits, item_emb.transpose(0, 1))
+
     def multiple_predict(self, inputs, inputs_mask):
         bs = inputs.shape[0]
-        instruct_embeds = self.llama_model.model.embed_tokens(self.instruct_ids.cuda()).expand(bs, -1, -1)
-        response_embeds = self.llama_model.model.embed_tokens(self.response_ids.cuda()).expand(bs, -1, -1)
+        instruct_embeds = self._embed_tokens(self.instruct_ids.cuda()).expand(bs, -1, -1)
+        response_embeds = self._embed_tokens(self.response_ids.cuda()).expand(bs, -1, -1)
         instruct_mask = self.instruct_mask.cuda().expand(bs, -1)
         response_mask = self.response_mask.cuda().expand(bs, -1)
 
@@ -302,7 +349,7 @@ class LLM4Rec(nn.Module):
         outputs_all = outputs.hidden_states
         pooled_logits = list()
         for output_tmp in outputs_all: # downsample
-            pooled_tmp = self.score(output_tmp[:,-1])#output_tmp[:,-1]#self.score(output_tmp[:,-1])
+            pooled_tmp = self.score(self._mean_pool(output_tmp, attention_mask))
             pooled_logits.append(pooled_tmp.unsqueeze(1))
         return pooled_logits
 
@@ -310,47 +357,13 @@ class LLM4Rec(nn.Module):
         # pooled_logits = self.multiple_predict(inputs, inputs_mask)#self.predict(inputs, inputs_mask) #[b,emb_dim]
 
         loss = None
-        if torch.max(data_type).item() ==0: # all item ce loss
+        if torch.max(data_type).item() in {0, 1}: # all item ce loss / full-ranking eval
             pooled_logits = self.predict(inputs, inputs_mask)
-            test_item_emb = self.input_embeds.weight
-            logits = torch.matmul(pooled_logits, test_item_emb.transpose(0, 1))
+            logits = self._all_item_logits(pooled_logits)
             loss = self.loss(logits, answers.squeeze(-1))
-            predict = None
-        elif torch.max(data_type).item() ==1: #predict sample negative , bce loss
-            pooled_logits = self.predict(inputs, inputs_mask)
-            log_feats = pooled_logits.unsqueeze(1)
-            pos_embs = self.input_embeds(answers)
-            neg_embs = self.input_embeds(neg_samples)
-            pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
-            neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
-
-            pos_label = torch.ones_like(pos_logits).cuda()
-            neg_label = torch.zeros_like(neg_logits).cuda()
-            loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
-            loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
-            loss = loss_real + loss_false
-            predict = torch.cat((pos_logits,neg_logits),-1).squeeze()#.squeeze().cpu().detach().numpy().copy()
-        elif torch.max(data_type).item() ==2: # 33 [512,99,4096]
-            pooled_logits = self.multiple_predict(inputs, inputs_mask)
-            pos_embs = self.input_embeds(answers).permute(0, 2, 1)
-            neg_embs = self.input_embeds(neg_samples).permute(0, 2, 1)
-            loss = list()
-            predict = list()
-            for log_feats in pooled_logits: # 33*loop
-                pos_logits = torch.matmul(log_feats, pos_embs)
-                neg_logits = torch.matmul(log_feats, neg_embs)
-                loss_tmp = None
-                pos_label = torch.ones_like(pos_logits).cuda()
-                neg_label = torch.zeros_like(neg_logits).cuda()
-                loss_real = nn.BCEWithLogitsLoss(reduce=False)(pos_logits, pos_label)
-                loss_false = nn.BCEWithLogitsLoss(reduce=False)(neg_logits, neg_label)
-                loss_tmp = torch.mean(loss_real,-1) + torch.mean(loss_false,-1)
-                loss.append(loss_tmp)
-                predict_tmp = torch.cat((pos_logits,neg_logits),-1).squeeze()
-                predict.append(predict_tmp)
-            loss = torch.stack(loss,dim=1)
-            predict = torch.stack(predict,dim=1)
-            predict = torch.cat((predict,loss),-1)[:,-10:,:].contiguous() # [bs,33,1000+1]
+            predict = logits
+        else:
+            raise ValueError(f"Unsupported data_type for LLM4Rec: {torch.max(data_type).item()}")
         return { 'loss':loss,
             'logits': predict,
         }
@@ -358,47 +371,17 @@ class LLM4Rec(nn.Module):
 class LLM4RecTeacher(LLM4Rec):
     def forward(self, input_ids, labels, inputs, inputs_mask, answers, neg_samples, data_type):
         loss = None
-        if torch.max(data_type).item() ==0: # all item ce loss
-            pooled_logits = self.predict(inputs, inputs_mask)
-            test_item_emb = self.input_embeds.weight
-            logits = torch.matmul(pooled_logits, test_item_emb.transpose(0, 1))
+        if torch.max(data_type).item() in {0, 1}: # all item ce loss / full-ranking eval
+            pooled_logits, teacher_output_states = self.predict(inputs, inputs_mask, output_hidden_states=True, output_logits=True)
+            logits = self._all_item_logits(pooled_logits)
             loss = self.loss(logits, answers.squeeze(-1))
-            predict = None
-        elif torch.max(data_type).item() ==1: #predict sample negative , bce loss
-            pooled_logits = self.predict(inputs, inputs_mask)
-            log_feats = pooled_logits.unsqueeze(1)
-            pos_embs = self.input_embeds(answers)
-            neg_embs = self.input_embeds(neg_samples)
-            pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
-            neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
-
-            pos_label = torch.ones_like(pos_logits).cuda()
-            neg_label = torch.zeros_like(neg_logits).cuda()
-            loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
-            loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
-            loss = loss_real + loss_false
-            predict = torch.cat((pos_logits,neg_logits),-1).squeeze()#.squeeze().cpu().detach().numpy().copy()
-        elif torch.max(data_type).item() ==2: # 33 [512,99,4096]
-            pooled_logits = self.multiple_predict(inputs, inputs_mask)
-            pos_embs = self.input_embeds(answers).permute(0, 2, 1)
-            neg_embs = self.input_embeds(neg_samples).permute(0, 2, 1)
-            loss = list()
-            predict = list()
-            for log_feats in pooled_logits: # 33*loop
-                pos_logits = torch.matmul(log_feats, pos_embs)
-                neg_logits = torch.matmul(log_feats, neg_embs)
-                loss_tmp = None
-                pos_label = torch.ones_like(pos_logits).cuda()
-                neg_label = torch.zeros_like(neg_logits).cuda()
-                loss_real = nn.BCEWithLogitsLoss(reduce=False)(pos_logits, pos_label)
-                loss_false = nn.BCEWithLogitsLoss(reduce=False)(neg_logits, neg_label)
-                loss_tmp = torch.mean(loss_real,-1) + torch.mean(loss_false,-1)
-                loss.append(loss_tmp)
-                predict_tmp = torch.cat((pos_logits,neg_logits),-1).squeeze()
-                predict.append(predict_tmp)
-            loss = torch.stack(loss,dim=1)
-            predict = torch.stack(predict,dim=1)
-            predict = torch.cat((predict,loss),-1)[:,-10:,:].contiguous() # [bs,33,1000+1]
+            predict = logits
+            return { 'loss':loss,
+                'logits': predict,
+                'teacher_output_states':teacher_output_states,
+            }
+        else:
+            raise ValueError(f"Unsupported data_type for LLM4RecTeacher: {torch.max(data_type).item()}")
         return { 'loss':loss,
             'logits': predict,
         }
@@ -416,16 +399,17 @@ class LLM4RecStudent(LLM4Rec):
 
     def forward(self, input_ids, labels, inputs, inputs_mask, answers, neg_samples, data_type):
         loss = None
-        if torch.max(data_type).item() ==0: # all item ce loss
+        if torch.max(data_type).item() in {0, 1}: # all item ce loss / full-ranking eval
             pooled_logits,student_output_states = self.predict(inputs, inputs_mask,output_hidden_states=True,output_logits=True)
-            test_item_emb = self.input_embeds.weight
-            logits = torch.matmul(pooled_logits, test_item_emb.transpose(0, 1))
+            logits = self._all_item_logits(pooled_logits)
             loss = self.loss(logits, answers.squeeze(-1))
             predict = logits
             loss_cls_multiple = 0
             if self.is_cls_multiple:
+                test_item_emb = F.normalize(self.input_embeds.weight, dim=-1)
                 for i in range(0,self.distill_block-1): 
-                    pooled_logits_tmp = self.down_layer_list[i](student_output_states[(len(student_output_states)//self.distill_block)*(i+1)][:, -1]) 
+                    pooled_logits_tmp = self.down_layer_list[i](student_output_states[(len(student_output_states)//self.distill_block)*(i+1)].mean(dim=1)) 
+                    pooled_logits_tmp = F.normalize(pooled_logits_tmp, dim=-1)
                     logits_tmp = torch.matmul(pooled_logits_tmp, test_item_emb.transpose(0, 1))
                     loss_tmp = self.loss(logits_tmp, answers.squeeze(-1))
                     loss_cls_multiple = loss_cls_multiple + loss_tmp
@@ -435,28 +419,13 @@ class LLM4RecStudent(LLM4Rec):
                 'data_type':data_type,
                 'loss_cls_multiple':loss_cls_multiple,
             }
-        elif torch.max(data_type).item() ==1: #predict sample negative , bce loss
-            pooled_logits = self.predict(inputs, inputs_mask)
-            log_feats = pooled_logits.unsqueeze(1)
-            pos_embs = self.input_embeds(answers)
-            neg_embs = self.input_embeds(neg_samples)
-            pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
-            neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
-
-            pos_label = torch.ones_like(pos_logits).cuda()
-            neg_label = torch.zeros_like(neg_logits).cuda()
-            loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
-            loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
-            loss = loss_real + loss_false
-            predict = torch.cat((pos_logits,neg_logits),-1).squeeze()#.squeeze().cpu().detach().numpy().copy()
-            return { 'loss':loss,
-                'logits': predict,
-            }
-
+        else:
+            raise ValueError(f"Unsupported data_type for LLM4RecStudent: {torch.max(data_type).item()}")
 
 class LLM4RecDistill(nn.Module):
     def __init__(self, **args):
         super(LLM4RecDistill, self).__init__()
+        self._keys_to_ignore_on_save = []
         self.args = args
         self.model_teacher = LLM4Rec(
             base_model=self.args['base_model'],
@@ -528,31 +497,37 @@ class LLM4RecDistill(nn.Module):
         if torch.max(data_type).item() ==0: # all item ce loss 
             # self.model_student._set_static_graph(True)
             teacher_output_states,student_hidden_states,pooled_logits_teacher,pooled_logits_student = self.predict(inputs, inputs_mask)
-            test_item_emb = self.model_student.input_embeds.weight
-            logits_teacher = torch.matmul(pooled_logits_teacher, test_item_emb.transpose(0, 1))
-            logits_student = torch.matmul(pooled_logits_student, test_item_emb.transpose(0, 1))
-            loss = self.loss_cls(logits_teacher, answers.squeeze(-1)) + self.loss_cls(logits_student, answers.squeeze(-1)) 
-            predict = None
+            test_item_emb = F.normalize(self.model_student.input_embeds.weight, dim=-1)
+            logits_teacher = torch.matmul(F.normalize(pooled_logits_teacher, dim=-1), test_item_emb.transpose(0, 1))
+            logits_student = torch.matmul(F.normalize(pooled_logits_student, dim=-1), test_item_emb.transpose(0, 1))
+            loss = self.loss_cls(logits_student, answers.squeeze(-1))
+            predict = logits_student
             loss_cls_multiple_teacher, loss_cls_multiple_student = 0, 0
             logits_teacher_concat, logits_student_concat = list(), list()
             if self.args['is_cls_multiple_teacher']:
                 for i in range(1,self.distill_block):  
-                    pooled_logits_tmp = self.down_layer_teacher_list[i-1](teacher_output_states[(len(teacher_output_states)//self.distill_block)*i][:, -1]) 
+                    pooled_logits_tmp = self.down_layer_teacher_list[i-1](teacher_output_states[(len(teacher_output_states)//self.distill_block)*i].mean(dim=1)) 
+                    pooled_logits_tmp = F.normalize(pooled_logits_tmp, dim=-1)
                     logits_tmp = torch.matmul(pooled_logits_tmp, test_item_emb.transpose(0, 1))
                     loss_tmp = self.loss_cls(logits_tmp, answers.squeeze(-1))
                     loss_cls_multiple_teacher = loss_cls_multiple_teacher + loss_tmp
                     logits_teacher_concat.append(logits_tmp)
                 logits_teacher_concat.append(logits_teacher)
                 # logits_teacher_concat = torch.stack(logits_teacher_concat)
+            else:
+                logits_teacher_concat.append(logits_teacher)
             if self.args['is_cls_multiple_student']:
                 for i in range(1,self.distill_block): 
-                    pooled_logits_tmp = self.down_layer_student_list[i-1](student_hidden_states[(len(student_hidden_states)//self.distill_block)*i][:, -1]) 
+                    pooled_logits_tmp = self.down_layer_student_list[i-1](student_hidden_states[(len(student_hidden_states)//self.distill_block)*i].mean(dim=1)) 
+                    pooled_logits_tmp = F.normalize(pooled_logits_tmp, dim=-1)
                     logits_tmp = torch.matmul(pooled_logits_tmp, test_item_emb.transpose(0, 1))
                     loss_tmp = self.loss_cls(logits_tmp, answers.squeeze(-1))
                     loss_cls_multiple_student = loss_cls_multiple_student + loss_tmp
                     logits_student_concat.append(logits_tmp)
                 logits_student_concat.append(logits_student)
                 # logits_student_concat = torch.stack(logits_student_concat)
+            else:
+                logits_student_concat.append(logits_student)
             return { 'loss':loss,
                 'logits': predict,
                 'teacher_output_states':teacher_output_states,
@@ -563,21 +538,14 @@ class LLM4RecDistill(nn.Module):
                 'logits_student':logits_student_concat,
                 'data_type':data_type,
             }
-        elif torch.max(data_type).item() ==1: #predict sample negative , bce loss
+        elif torch.max(data_type).item() ==1: # full-ranking eval
             pooled_logits = self.predict_student(inputs, inputs_mask)
-            log_feats = pooled_logits.unsqueeze(1)
-            pos_embs = self.model_student.input_embeds(answers)
-            neg_embs = self.model_student.input_embeds(neg_samples)
-            pos_logits = torch.matmul(log_feats, pos_embs.permute(0, 2, 1))
-            neg_logits = torch.matmul(log_feats, neg_embs.permute(0, 2, 1))
-
-            pos_label = torch.ones_like(pos_logits).cuda()
-            neg_label = torch.zeros_like(neg_logits).cuda()
-            loss_real = nn.BCEWithLogitsLoss()(pos_logits, pos_label)
-            loss_false = nn.BCEWithLogitsLoss()(neg_logits, neg_label)
-            loss = loss_real + loss_false
-            predict = torch.cat((pos_logits,neg_logits),-1).squeeze()#.squeeze().cpu().detach().numpy().copy()
+            test_item_emb = F.normalize(self.model_student.input_embeds.weight, dim=-1)
+            predict = torch.matmul(F.normalize(pooled_logits, dim=-1), test_item_emb.transpose(0, 1))
+            loss = self.loss_cls(predict, answers.squeeze(-1))
 
             return { 'loss':loss,
                 'logits': predict,
             }
+        else:
+            raise ValueError(f"Unsupported data_type for LLM4RecDistill: {torch.max(data_type).item()}")
